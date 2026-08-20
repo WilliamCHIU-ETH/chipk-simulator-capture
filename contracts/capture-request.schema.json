@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/chipk-capture/request-v1.json",
+  "title": "ChipK Capture Request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "requestId", "operation", "mode", "target", "outputDirectory"],
+  "properties": {
+    "contractVersion": { "const": 1 },
+    "requestId": { "type": "string", "pattern": ".*\\S.*" },
+    "operation": { "enum": ["screenshot", "record"] },
+    "mode": { "enum": ["live", "test"] },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["routeId"],
+      "properties": {
+        "routeId": { "type": "string", "pattern": "^chipk\\.[A-Za-z0-9._-]+$" },
+        "stockId": { "type": "string", "pattern": ".*\\S.*" },
+        "stockName": { "type": "string", "pattern": ".*\\S.*" },
+        "recipeId": { "type": "string", "pattern": ".*\\S.*" }
+      }
+    },
+    "outputDirectory": { "type": "string", "pattern": ".*\\S.*" }
+  }
+}

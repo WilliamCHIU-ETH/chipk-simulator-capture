@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "synthetic-v1",
+  "classification": "synthetic",
+  "baseUrl": "chipk-fixture://capture.invalid/landing",
+  "routes": [
+    {
+      "id": "chipk.fixture.stock-overview",
+      "operations": ["screenshot"],
+      "requiredParams": ["stockId"],
+      "optionalParams": ["stockName"],
+      "queryParams": {
+        "stockId": "stockid",
+        "stockName": "stockname"
+      },
+      "fixedParams": {
+        "view": "overview"
+      },
+      "readinessTexts": ["Synthetic stock overview"]
+    },
+    {
+      "id": "chipk.fixture.stock-interaction",
+      "operations": ["record"],
+      "requiredParams": ["stockId", "recipeId"],
+      "optionalParams": ["stockName"],
+      "queryParams": {
+        "stockId": "stockid",
+        "stockName": "stockname",
+        "recipeId": "recipe"
+      },
+      "fixedParams": {
+        "view": "interaction"
+      },
+      "readinessTexts": ["Synthetic interaction surface"]
+    }
+  ]
+}

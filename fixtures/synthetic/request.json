@@ -1,0 +1,12 @@
+{
+  "contractVersion": 1,
+  "requestId": "synthetic-request-001",
+  "operation": "screenshot",
+  "mode": "test",
+  "target": {
+    "routeId": "chipk.fixture.stock-overview",
+    "stockId": "0000",
+    "stockName": "Example Corporation"
+  },
+  "outputDirectory": "runtime-output"
+}
