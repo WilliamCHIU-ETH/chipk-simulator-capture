@@ -1,0 +1,17 @@
+{
+  "name": "@williamchiu-eth/chipk-simulator-capture",
+  "version": "0.0.0-preflight.1",
+  "private": true,
+  "description": "Optional ChipK material acquisition provider contract preflight",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "bin": {
+    "chipk-capture": "bin/chipk-capture.js"
+  },
+  "scripts": {
+    "test": "node --test test/contract-smoke.test.js",
+    "check": "node bin/chipk-capture.js capabilities --json",
+    "preflight": "npm test && npm run check"
+  }
+}

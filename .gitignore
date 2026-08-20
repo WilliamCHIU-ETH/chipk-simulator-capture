@@ -1,0 +1,9 @@
+node_modules/
+.deploy/
+runtime-data/
+coverage/
+*.mp4
+*.mov
+*.png
+*.log
+.DS_Store
