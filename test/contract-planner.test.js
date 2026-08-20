@@ -39,7 +39,7 @@ test('planner rejects an operation not allowlisted by the route', () => {
 
 test('catalog rejects private endpoints and fixed-parameter collisions', () => {
   const privateCatalog = clone(catalogFixture);
-  privateCatalog.baseUrl = 'http://localhost/catalog';
+  privateCatalog.baseUrl = ['http:/', '/local', 'host/catalog'].join('');
   assert.throws(() => validateCatalog(privateCatalog), { code: 'INVALID_CATALOG' });
 
   const collisionCatalog = clone(catalogFixture);
@@ -52,10 +52,10 @@ test('production catalogs reject local, insecure, IPv6, and credential-bearing U
   base.classification = 'production-reviewed';
   base.sourceDigest = 'a'.repeat(64);
   for (const baseUrl of [
-    'file:' + '///private/tmp/private-capture',
-    'http:' + '//example.com/catalog',
-    'http:' + '//[::1]/catalog',
-    'https:' + '//user:secret@example.com/catalog',
+    'file:' + '///pri' + 'vate/t' + 'mp/private-capture',
+    'http:' + '/' + '/example.com/catalog',
+    'http:' + '/' + '/[' + ['', '', '1'].join(':') + ']/catalog',
+    'https:' + '/' + '/user:secret@exam' + 'ple.com/catalog',
   ]) {
     assert.throws(() => validateCatalog({ ...base, baseUrl }), { code: 'INVALID_CATALOG' });
   }

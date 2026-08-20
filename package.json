@@ -7,11 +7,13 @@
     "node": ">=22 <25"
   },
   "bin": {
-    "chipk-capture": "bin/chipk-capture.js"
+    "chipk-capture": "bin/chipk-capture.js",
+    "chipk-refresh-catalog": "bin/chipk-refresh-catalog.js"
   },
   "scripts": {
     "test": "node --test test/*.test.js",
     "check": "node bin/chipk-capture.js capabilities --json && node bin/chipk-capture.js plan --request fixtures/synthetic/request.json --json",
+    "refresh:catalog": "node bin/chipk-refresh-catalog.js",
     "scan:sanitized": "node test/sanitized-tree-check.js",
     "preflight": "npm test && npm run check && npm run scan:sanitized"
   }
