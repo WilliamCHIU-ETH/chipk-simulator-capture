@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const net = require('node:net');
 const { ContractError } = require('./errors');
 const { normalizeJsonObject } = require('./json');
 
@@ -22,6 +23,7 @@ const ROUTE_KEYS = new Set([
   'readinessTexts',
 ]);
 const TARGET_PARAMS = new Set(['stockId', 'stockName', 'recipeId']);
+const SYNTHETIC_HOSTNAME = 'capture.invalid';
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -40,18 +42,138 @@ function requireString(value, label) {
   return value.trim();
 }
 
-function isPrivateHostname(hostname) {
-  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (!normalized || normalized === 'localhost' || normalized.endsWith('.local')) return true;
-  if (normalized.includes(':')) return true;
-  const parts = normalized.split('.').map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-  return parts[0] === 0
-    || parts[0] === 10
-    || parts[0] === 127
-    || (parts[0] === 169 && parts[1] === 254)
-    || (parts[0] === 192 && parts[1] === 168)
-    || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31);
+function canonicalizeHostname(hostname) {
+  return hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+}
+
+const NON_PUBLIC_HOST_LABELS = new Set([
+  'localhost',
+  'local',
+  'internal',
+  'private',
+  'non-public',
+  'nonpublic',
+]);
+const NON_PUBLIC_DNS_SUFFIXES = Object.freeze([
+  'invalid',
+  'test',
+  'example',
+  'localhost',
+  'home.arpa',
+  'onion',
+  'alt',
+  'in-addr.arpa',
+  'ip6.arpa',
+  'ipv4only.arpa',
+  'resolver.arpa',
+]);
+
+function ipv4OctetsToInteger(octets) {
+  return octets.reduce((value, part) => (value * 256) + Number(part), 0) >>> 0;
+}
+
+function ipv4ToInteger(hostname) {
+  return ipv4OctetsToInteger(hostname.split('.'));
+}
+
+function ipv4InRange(value, baseOctets, prefixLength) {
+  const shift = 32 - prefixLength;
+  return (value >>> shift) === (ipv4OctetsToInteger(baseOctets) >>> shift);
+}
+
+const NON_PUBLIC_IPV4_RANGES = Object.freeze([
+  [[0, 0, 0, 0], 8],
+  [[10, 0, 0, 0], 8],
+  [[100, 64, 0, 0], 10],
+  [[127, 0, 0, 0], 8],
+  [[169, 254, 0, 0], 16],
+  [[172, 16, 0, 0], 12],
+  [[192, 0, 0, 0], 24],
+  [[192, 0, 2, 0], 24],
+  [[192, 88, 99, 0], 24],
+  [[192, 168, 0, 0], 16],
+  [[198, 18, 0, 0], 15],
+  [[198, 51, 100, 0], 24],
+  [[203, 0, 113, 0], 24],
+  [[224, 0, 0, 0], 4],
+  [[240, 0, 0, 0], 4],
+]);
+
+function ipv6ToInteger(hostname) {
+  const halves = hostname.split('::');
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const missing = 8 - left.length - right.length;
+  if ((halves.length === 1 && missing !== 0) || (halves.length === 2 && missing < 1)) return null;
+  const groups = [...left, ...Array(missing).fill('0'), ...right];
+  if (groups.length !== 8) return null;
+  return groups.reduce((value, group) => (value << 16n) | BigInt(`0x${group || '0'}`), 0n);
+}
+
+function ipv6InRange(value, base, prefixLength) {
+  const shift = 128n - BigInt(prefixLength);
+  const baseValue = ipv6ToInteger(base);
+  return baseValue !== null && (value >> shift) === (baseValue >> shift);
+}
+
+const NON_PUBLIC_IPV6_RANGES = Object.freeze([
+  ['::', 96],
+  ['::ffff:0:0', 96],
+  ['64:ff9b::', 96],
+  ['64:ff9b:1::', 48],
+  ['100::', 64],
+  ['2001::', 32],
+  ['2001:2::', 48],
+  ['2001:10::', 28],
+  ['2001:20::', 28],
+  ['2001:db8::', 32],
+  ['2002::', 16],
+  ['3fff::', 20],
+  ['5f00::', 16],
+  ['fc00::', 7],
+  ['fe80::', 10],
+  ['fec0::', 10],
+  ['ff00::', 8],
+]);
+
+function isNonPublicHostname(hostname) {
+  const normalized = canonicalizeHostname(hostname);
+  if (!normalized) return true;
+  if (normalized.split('.').some((label) => NON_PUBLIC_HOST_LABELS.has(label))) return true;
+
+  const ipVersion = net.isIP(normalized);
+  if (ipVersion === 4) {
+    const value = ipv4ToInteger(normalized);
+    return NON_PUBLIC_IPV4_RANGES.some(([baseOctets, prefixLength]) => (
+      ipv4InRange(value, baseOctets, prefixLength)
+    ));
+  }
+  if (ipVersion === 6) {
+    const value = ipv6ToInteger(normalized);
+    return value === null
+      || NON_PUBLIC_IPV6_RANGES.some(([base, prefixLength]) => ipv6InRange(value, base, prefixLength));
+  }
+  return false;
+}
+
+function normalizeHostnameForPolicy(hostname) {
+  const canonical = canonicalizeHostname(hostname);
+  const authority = net.isIP(canonical) === 6 ? `[${canonical}]` : canonical;
+  try {
+    return canonicalizeHostname(new URL(`http://${authority}/`).hostname);
+  } catch {
+    throw new ContractError('INVALID_CATALOG', 'catalog.baseUrl hostname is invalid');
+  }
+}
+
+function isNonPublicDnsNamespace(hostname) {
+  if (net.isIP(hostname)) return false;
+  const labels = hostname.split('.');
+  if (labels.length < 2) return true;
+  return NON_PUBLIC_DNS_SUFFIXES.some((suffix) => (
+    hostname === suffix || hostname.endsWith(`.${suffix}`)
+  ));
 }
 
 function validateUrl(value, classification) {
@@ -66,15 +188,22 @@ function validateUrl(value, classification) {
     throw new ContractError('INVALID_CATALOG', 'catalog.baseUrl must not contain URL credentials');
   }
   if (parsed.port) throw new ContractError('INVALID_CATALOG', 'catalog.baseUrl must not contain a custom port');
+  const hostname = normalizeHostnameForPolicy(parsed.hostname);
+  parsed.hostname = net.isIP(hostname) === 6 ? `[${hostname}]` : hostname;
   if (classification === 'synthetic') {
-    if (parsed.protocol !== 'chipk-fixture:' || !parsed.hostname.endsWith('.invalid')) {
-      throw new ContractError('INVALID_CATALOG', 'synthetic catalog must use the chipk-fixture scheme and an .invalid host');
+    if (parsed.protocol !== 'chipk-fixture:' || hostname !== SYNTHETIC_HOSTNAME) {
+      throw new ContractError(
+        'INVALID_CATALOG',
+        `synthetic catalog must use chipk-fixture://${SYNTHETIC_HOSTNAME}`,
+      );
     }
   } else if (!['https:', 'chipk:'].includes(parsed.protocol)) {
     throw new ContractError('INVALID_CATALOG', 'production catalog must use https or the reviewed custom scheme');
+  } else if (isNonPublicDnsNamespace(hostname)) {
+    throw new ContractError('INVALID_CATALOG', 'catalog.baseUrl must use a public DNS namespace or public IP');
   }
-  if (isPrivateHostname(parsed.hostname)) {
-    throw new ContractError('INVALID_CATALOG', 'catalog.baseUrl must not use a private or local hostname');
+  if (isNonPublicHostname(hostname)) {
+    throw new ContractError('INVALID_CATALOG', 'catalog.baseUrl must not use a non-public hostname');
   }
   return parsed.toString();
 }

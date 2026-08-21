@@ -19,7 +19,7 @@ function productionCatalog() {
   const catalog = clone(catalogFixture);
   catalog.classification = 'production-reviewed';
   catalog.catalogVersion = 'reviewed-test-v1';
-  catalog.baseUrl = 'https://example.invalid/catalog';
+  catalog.baseUrl = 'https://example.com/catalog';
   catalog.sourceDigest = canonicalCatalogDigest(catalog);
   return catalog;
 }
