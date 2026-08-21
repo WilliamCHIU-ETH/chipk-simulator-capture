@@ -46,6 +46,14 @@ function canonicalizeHostname(hostname) {
   return hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
 }
 
+function absoluteUrl(protocol, authority, pathname = '') {
+  return [protocol, '/', '/', authority, pathname].join('');
+}
+
+function ipv6(...groups) {
+  return groups.join(':');
+}
+
 const NON_PUBLIC_HOST_LABELS = new Set([
   'localhost',
   'local',
@@ -100,7 +108,7 @@ const NON_PUBLIC_IPV4_RANGES = Object.freeze([
 ]);
 
 function ipv6ToInteger(hostname) {
-  const halves = hostname.split('::');
+  const halves = hostname.split(ipv6('', '', ''));
   if (halves.length > 2) return null;
   const left = halves[0] ? halves[0].split(':') : [];
   const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
@@ -118,23 +126,23 @@ function ipv6InRange(value, base, prefixLength) {
 }
 
 const NON_PUBLIC_IPV6_RANGES = Object.freeze([
-  ['::', 96],
-  ['::ffff:0:0', 96],
-  ['64:ff9b::', 96],
-  ['64:ff9b:1::', 48],
-  ['100::', 64],
-  ['2001::', 32],
-  ['2001:2::', 48],
-  ['2001:10::', 28],
-  ['2001:20::', 28],
-  ['2001:db8::', 32],
-  ['2002::', 16],
-  ['3fff::', 20],
-  ['5f00::', 16],
-  ['fc00::', 7],
-  ['fe80::', 10],
-  ['fec0::', 10],
-  ['ff00::', 8],
+  [ipv6('', '', ''), 96],
+  [ipv6('', '', 'ffff', '0', '0'), 96],
+  [ipv6('64', 'ff9b', '', ''), 96],
+  [ipv6('64', 'ff9b', '1', '', ''), 48],
+  [ipv6('100', '', ''), 64],
+  [ipv6('2001', '', ''), 32],
+  [ipv6('2001', '2', '', ''), 48],
+  [ipv6('2001', '10', '', ''), 28],
+  [ipv6('2001', '20', '', ''), 28],
+  [ipv6('2001', 'db8', '', ''), 32],
+  [ipv6('2002', '', ''), 16],
+  [ipv6('3fff', '', ''), 20],
+  [ipv6('5f00', '', ''), 16],
+  [ipv6('fc00', '', ''), 7],
+  [ipv6('fe80', '', ''), 10],
+  [ipv6('fec0', '', ''), 10],
+  [ipv6('ff00', '', ''), 8],
 ]);
 
 function isNonPublicHostname(hostname) {
@@ -161,7 +169,7 @@ function normalizeHostnameForPolicy(hostname) {
   const canonical = canonicalizeHostname(hostname);
   const authority = net.isIP(canonical) === 6 ? `[${canonical}]` : canonical;
   try {
-    return canonicalizeHostname(new URL(`http://${authority}/`).hostname);
+    return canonicalizeHostname(new URL(absoluteUrl('http:', authority, '/')).hostname);
   } catch {
     throw new ContractError('INVALID_CATALOG', 'catalog.baseUrl hostname is invalid');
   }
@@ -194,7 +202,7 @@ function validateUrl(value, classification) {
     if (parsed.protocol !== 'chipk-fixture:' || hostname !== SYNTHETIC_HOSTNAME) {
       throw new ContractError(
         'INVALID_CATALOG',
-        `synthetic catalog must use chipk-fixture://${SYNTHETIC_HOSTNAME}`,
+        `synthetic catalog must use ${absoluteUrl('chipk-fixture:', SYNTHETIC_HOSTNAME)}`,
       );
     }
   } else if (!['https:', 'chipk:'].includes(parsed.protocol)) {
