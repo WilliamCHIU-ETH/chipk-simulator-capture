@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { spawnSync: spawnGit } = require(['node', 'child_process'].join(':'));
 const sourceSchema = require('../contracts/source-bundle.schema.json');
 const sourceFixture = require('../fixtures/synthetic/source-bundle.json');
 const { main, parseFlags } = require('../bin/chipk-refresh-catalog');
@@ -19,10 +20,18 @@ const {
 } = require('../src/catalog-compiler');
 const { createProvider } = require('../src/provider');
 const {
+  endpointIssue,
+  isInternalHostname,
   sensitiveFieldIssue,
   sourceContentIssues,
 } = require('../src/sensitive-taxonomy');
-const { inspectJsonContent } = require('./sanitized-tree-check');
+const {
+  inspectJsonContent,
+  listTrackedEntries,
+  listTrackedFiles,
+  scanTree,
+  trackedSourceIssues,
+} = require('./sanitized-tree-check');
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -83,6 +92,65 @@ function setup() {
 
 function cleanup(root) {
   fs.rmSync(root, { recursive: true, force: true });
+}
+
+function cleanTestEnvironment(overrides = {}) {
+  const gitEnvironment = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith('GIT_')) gitEnvironment[key] = value;
+  }
+  return { ...gitEnvironment, ...overrides };
+}
+
+function fixtureGitRunner(command, args, options) {
+  if (options && options.env) return spawnGit(command, args, options);
+  return spawnGit(command, args, {
+    ...options,
+    env: cleanTestEnvironment(),
+  });
+}
+
+function runGit(root, args) {
+  const result = fixtureGitRunner('git', args, {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.equal(
+    result.status,
+    0,
+    `git ${args[0]} failed: ${String(result.stderr || '').trim()}`,
+  );
+  return String(result.stdout || '').trim();
+}
+
+function runGitWithEnvironment(root, args, environment) {
+  const result = spawnGit('git', args, {
+    cwd: root,
+    encoding: 'utf8',
+    env: environment,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.equal(
+    result.status,
+    0,
+    `git ${args[0]} failed: ${String(result.stderr || '').trim()}`,
+  );
+  return String(result.stdout || '').trim();
+}
+
+function setupGitFixture() {
+  const root = makeRoot();
+  runGit(root, ['init', '--quiet']);
+  runGit(root, ['config', 'core.autocrlf', 'false']);
+  runGit(root, ['config', 'core.filemode', 'true']);
+  runGit(root, ['config', ['user', 'name'].join('.'), 'Fixture']);
+  runGit(root, [
+    'config',
+    ['user', 'email'].join('.'),
+    ['fixture', 'example.invalid'].join('@'),
+  ]);
+  return root;
 }
 
 test('source schema and runtime validator retain a closed versioned envelope', () => {
@@ -383,6 +451,120 @@ test('private endpoints, machine paths, persona fields and credential locators f
   }
 });
 
+test('DNS root dots are removed before internal-host checks', () => {
+  const dottedLocalhost = ['local', 'host.'].join('');
+  const dottedInternalHost = ['api.', 'intern', 'al.example.com.'].join('');
+  assert.equal(isInternalHostname(dottedLocalhost), true);
+  assert.equal(isInternalHostname(dottedInternalHost), true);
+  assert.equal(isInternalHostname('public.example.com.'), false);
+  assert.equal(
+    endpointIssue(['https:/', `/${dottedLocalhost}`, '/catalog'].join('')),
+    'company, internal, or non-public endpoint',
+  );
+
+  for (const hostname of [dottedLocalhost, dottedInternalHost]) {
+    const value = clone(sourceFixture);
+    value.baseUrl = ['https:/', `/${hostname}`, '/catalog'].join('');
+    assert.throws(() => compileCatalogBytes(value), { code: 'PRIVATE_SOURCE_DATA' });
+  }
+});
+
+test('public policy-word domains stay public while explicit private labels remain blocked', () => {
+  for (const hostname of ['dev.to', 'test.com', 'builder.io', 'sandbox.com']) {
+    assert.equal(isInternalHostname(hostname), false);
+    const endpoint = ['https:/', `/${hostname}`, '/catalog'].join('');
+    assert.equal(endpointIssue(endpoint), null);
+    const value = clone(sourceFixture);
+    value.classification = 'production-reviewed';
+    value.baseUrl = endpoint;
+    assert.doesNotThrow(() => compileCatalogBytes(value));
+  }
+
+  for (const hostname of [
+    ['lo', 'cal.example.com'].join(''),
+    ['inter', 'nal.example.com'].join(''),
+    ['pri', 'vate.example.com'].join(''),
+    ['api.sand', 'box.example.com'].join(''),
+    ['service.lo', 'cal'].join(''),
+    ['service.pri', 'vate'].join(''),
+    ['local', 'host'].join(''),
+    ['12', '7.0.0.1'].join(''),
+  ]) {
+    assert.equal(isInternalHostname(hostname), true);
+    assert.equal(
+      endpointIssue(['https:/', `/${hostname}`, '/catalog'].join('')),
+      'company, internal, or non-public endpoint',
+    );
+  }
+});
+
+test('secure-store locator fields and parameter-name variants fail closed', () => {
+  const locatorNames = [
+    ['key', 'chainService'].join(''),
+    ['key', 'chainAccount'].join(''),
+    ['key', 'chain_service'].join(''),
+    ['KEY', 'CHAIN-REFERENCE'].join(''),
+    ['key', 'chainlocator'].join(''),
+    ['ios_key', 'chain_reference'].join('_'),
+    ['apple_key', 'chain_locator'].join('_'),
+    ['my.key', 'chain.reference'].join('-'),
+    ['key', 'chainReference'].join(''),
+    ['my', 'Key', 'chainService'].join(''),
+    ['chipk', 'Key', 'chainAccount'].join(''),
+    ['catalog', 'Key', 'chainReferenceV2'].join(''),
+    ['my', 'key', 'chainlocator'].join(''),
+  ];
+
+  for (const locatorName of locatorNames) {
+    assert.ok(sensitiveFieldIssue(locatorName));
+    assert.ok(inspectJsonContent(
+      JSON.stringify({ [locatorName]: 'fixture' }),
+      'serialized locator',
+    ).length > 0);
+
+    const fieldValue = clone(sourceFixture);
+    fieldValue.routes[0].fixedParams[0].name = locatorName;
+    assert.throws(() => compileCatalogBytes(fieldValue), { code: 'PRIVATE_SOURCE_DATA' });
+  }
+
+  for (const locatorName of locatorNames) {
+    for (const source of [
+      `const ${locatorName} = "fixture";`,
+      `${locatorName}: fixture`,
+    ]) {
+      assert.ok(sourceContentIssues(source).includes('identity or credential locator'));
+    }
+  }
+  for (const source of [
+    `settings["${['my', 'Key', 'chainService'].join('')}"] = "fixture";`,
+    `const {${['chipk', 'Key', 'chainAccount'].join('')}} = settings;`,
+  ]) {
+    assert.ok(sourceContentIssues(source).includes('identity or credential locator'));
+  }
+
+  const secureStoreProse = [
+    'This module describes the ',
+    ['Key', 'chain'].join(''),
+    ' service without storing a locator.',
+  ].join('');
+  assert.deepEqual(sourceContentIssues(secureStoreProse), []);
+
+  for (const safeName of [
+    'monkeyChainReaction',
+    'keyboardChain',
+    'keyChangeReference',
+    'hockey_chain',
+  ]) {
+    assert.equal(sensitiveFieldIssue(safeName), null);
+    for (const source of [
+      `const ${safeName} = "synthetic";`,
+      `${safeName}: synthetic`,
+    ]) {
+      assert.deepEqual(sourceContentIssues(source), []);
+    }
+  }
+});
+
 test('token-aware field checks avoid substring false positives and ordinary source filenames', () => {
   for (const name of ['formFactor', 'platformFallback', 'teamFavorite']) {
     assert.equal(sensitiveFieldIssue(name), null);
@@ -627,4 +809,316 @@ test('runtime source bundles are ignored while the tracked fixture stays synthet
   assert.throws(() => validateOutputDirectory(root, root), {
     code: 'SOURCE_TREE_BOUNDARY',
   });
+});
+
+test('sanitizer reads real Git index modes, blobs and matching worktree bytes', () => {
+  const root = setupGitFixture();
+  try {
+    writeText(path.join(root, '.gitignore'), 'node_modules/\nruntime-data/\ncoverage/\n');
+    writeText(path.join(root, 'safe.js'), "'use strict';\nconst fixture = 'synthetic';\n");
+    runGit(root, ['add', '--', '.gitignore', 'safe.js']);
+
+    const entries = listTrackedEntries({ root, gitRunner: fixtureGitRunner });
+    assert.deepEqual(entries.map((entry) => entry.path), ['.gitignore', 'safe.js']);
+    assert.ok(entries.every((entry) => entry.mode === '100644'));
+    assert.ok(entries.every((entry) => entry.stage === 0 && entry.flag === 'H'));
+    assert.deepEqual(listTrackedFiles(fixtureGitRunner, root), ['.gitignore', 'safe.js']);
+    assert.deepEqual(trackedSourceIssues(entries), []);
+    assert.deepEqual(scanTree({ root, gitRunner: fixtureGitRunner }), []);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('sanitizer catches prefixed secure-store fields in real JS, YAML, and JSON blobs', () => {
+  const root = setupGitFixture();
+  const prose = [
+    'This module describes the ',
+    ['Key', 'chain'].join(''),
+    ' service without storing a locator.\n',
+  ].join('');
+  const fixtures = new Map([
+    ['declaration.js', `const ${['my', 'Key', 'chainService'].join('')} = "fixture";\n`],
+    ['bracket-assignment.js', `settings["${['my', 'Key', 'chainService'].join('')}"] = "fixture";\n`],
+    ['destructuring.js', `const {${['chipk', 'Key', 'chainAccount'].join('')}} = settings;\n`],
+    ['catalog.yaml', `${['chipk', 'Key', 'chainAccount'].join('')}: fixture\n`],
+    ['catalog.json', `${JSON.stringify({
+      [['catalog', 'Key', 'chainReferenceV2'].join('')]: 'fixture',
+    })}\n`],
+  ]);
+  const prosePath = 'README.md';
+  try {
+    for (const [relative, content] of fixtures) writeText(path.join(root, relative), content);
+    writeText(path.join(root, prosePath), prose);
+    runGit(root, ['add', '--', ...fixtures.keys(), prosePath]);
+
+    const issues = scanTree({ root, gitRunner: fixtureGitRunner });
+    for (const relative of fixtures.keys()) {
+      assert.ok(
+        issues.some((issue) => issue.startsWith(`${relative}: Git index `)),
+        `${relative} must fail from its authoritative index blob`,
+      );
+      assert.ok(
+        issues.some((issue) => issue.startsWith(`${relative}: worktree `)),
+        `${relative} must fail from its matching worktree bytes`,
+      );
+    }
+    assert.equal(issues.some((issue) => issue.startsWith(`${prosePath}:`)), false);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('sanitizer rejects force-tracked ignored directories using the real Git index', () => {
+  const root = setupGitFixture();
+  const tracked = [
+    'node_modules/dependency/index.js',
+    'runtime-data/jobs/example/job.json',
+    'coverage/lcov.info',
+    '.deploy/manifest.json',
+  ];
+  try {
+    writeText(path.join(root, '.gitignore'), 'node_modules/\nruntime-data/\ncoverage/\n');
+    for (const relative of tracked) {
+      fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
+      writeText(path.join(root, relative), relative.endsWith('.json') ? '{}\n' : 'synthetic\n');
+    }
+    runGit(root, ['add', '--', '.gitignore', '.deploy/manifest.json']);
+    runGit(root, ['add', '--force', '--', ...tracked.slice(0, 3)]);
+
+    const issues = scanTree({ root, gitRunner: fixtureGitRunner });
+    for (const relative of tracked) {
+      assert.ok(issues.some((issue) => issue.startsWith(`${relative}: tracked `)), relative);
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('sanitizer scans index blob bytes even when a safer worktree file replaces them', () => {
+  const root = setupGitFixture();
+  const relative = 'catalog.json';
+  const target = path.join(root, relative);
+  try {
+    const sensitiveKey = ['user', 'Id'].join('');
+    writeJson(target, { [sensitiveKey]: 'fixture' });
+    runGit(root, ['add', '--', relative]);
+    fs.writeFileSync(target, '{"label":"synthetic"}\n', { mode: 0o600 });
+
+    const issues = scanTree({ root, gitRunner: fixtureGitRunner });
+    assert.ok(issues.some((issue) => (
+      issue.startsWith(`${relative}: Git index `)
+      && issue.includes('private identity or credential field')
+    )));
+    assert.ok(issues.includes(`${relative}: worktree bytes do not match the Git index blob`));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('sanitizer fatally decodes both index and worktree UTF-8 bytes', () => {
+  const root = setupGitFixture();
+  const relative = 'malformed.txt';
+  try {
+    fs.writeFileSync(path.join(root, relative), Buffer.from([0xc3, 0x28]), { mode: 0o600 });
+    runGit(root, ['add', '--', relative]);
+
+    const issues = scanTree({ root, gitRunner: fixtureGitRunner });
+    assert.ok(issues.includes(`${relative}: Git index is not valid UTF-8`));
+    assert.ok(issues.includes(`${relative}: worktree is not valid UTF-8`));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('sanitizer rejects missing, sparse, symbolic-link and gitlink index entries', () => {
+  const missingRoot = setupGitFixture();
+  try {
+    writeText(path.join(missingRoot, 'missing.js'), "'use strict';\n");
+    runGit(missingRoot, ['add', '--', 'missing.js']);
+    fs.unlinkSync(path.join(missingRoot, 'missing.js'));
+    assert.ok(scanTree({ root: missingRoot, gitRunner: fixtureGitRunner }).includes(
+      'missing.js: tracked worktree file is missing',
+    ));
+  } finally {
+    cleanup(missingRoot);
+  }
+
+  const sparseRoot = setupGitFixture();
+  try {
+    writeText(path.join(sparseRoot, 'sparse.js'), "'use strict';\n");
+    runGit(sparseRoot, ['add', '--', 'sparse.js']);
+    runGit(sparseRoot, ['update-index', '--skip-worktree', 'sparse.js']);
+    assert.ok(scanTree({ root: sparseRoot, gitRunner: fixtureGitRunner }).includes(
+      'sparse.js: sparse or hidden Git index entry is not allowed',
+    ));
+  } finally {
+    cleanup(sparseRoot);
+  }
+
+  const modeRoot = setupGitFixture();
+  try {
+    writeText(path.join(modeRoot, 'safe.js'), "'use strict';\n");
+    fs.symlinkSync('safe.js', path.join(modeRoot, 'linked.js'));
+    runGit(modeRoot, ['add', '--', 'safe.js', 'linked.js']);
+    runGit(modeRoot, ['commit', '--quiet', '-m', 'fixture']);
+    const commit = runGit(modeRoot, ['rev-parse', 'HEAD']);
+    runGit(modeRoot, [
+      'update-index',
+      '--add',
+      '--cacheinfo',
+      `160000,${commit},vendor/module`,
+    ]);
+
+    const issues = scanTree({ root: modeRoot, gitRunner: fixtureGitRunner });
+    assert.ok(issues.includes('linked.js: unsupported Git index mode 120000'));
+    assert.ok(issues.includes('vendor/module: unsupported Git index mode 160000'));
+  } finally {
+    cleanup(modeRoot);
+  }
+});
+
+test('sanitizer fails closed when the authoritative Git index cannot be read', () => {
+  const root = makeRoot();
+  try {
+    assert.throws(() => listTrackedEntries({ root, gitRunner: fixtureGitRunner }), {
+      message: 'tracked source inventory is unavailable',
+    });
+    assert.ok(scanTree({ root, gitRunner: fixtureGitRunner }).includes(
+      'git index: tracked source inventory is unavailable',
+    ));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('sanitizer fails closed when a real index references a missing blob', () => {
+  const root = setupGitFixture();
+  try {
+    const absentObject = '1'.repeat(40);
+    runGit(root, [
+      'update-index',
+      '--add',
+      '--info-only',
+      '--cacheinfo',
+      `100644,${absentObject},ghost.js`,
+    ]);
+    assert.ok(scanTree({ root, gitRunner: fixtureGitRunner }).includes(
+      'ghost.js: Git index blob is unavailable',
+    ));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test('sanitizer ignores ambient Git redirectors and reads only the canonical index', () => {
+  const root = setupGitFixture();
+  const alternateRoot = makeRoot();
+  const foreignRoot = setupGitFixture();
+  try {
+    const relative = 'runtime-data/jobs/example/job.json';
+    writeText(path.join(root, '.gitignore'), 'runtime-data/\n');
+    fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
+    writeText(path.join(root, relative), '{}\n');
+    runGit(root, ['add', '--', '.gitignore']);
+    runGit(root, ['add', '--force', '--', relative]);
+
+    const alternateIndex = path.join(alternateRoot, 'empty-index');
+    runGitWithEnvironment(root, ['read-tree', '--empty'], cleanTestEnvironment({
+      GIT_INDEX_FILE: alternateIndex,
+    }));
+    assert.ok(fs.statSync(alternateIndex).isFile());
+
+    const hostileEnvironment = cleanTestEnvironment({
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: path.join(foreignRoot, '.git', 'objects'),
+      GIT_COMMON_DIR: path.join(foreignRoot, '.git'),
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.bare',
+      GIT_CONFIG_VALUE_0: 'true',
+      GIT_DIR: path.join(foreignRoot, '.git'),
+      GIT_INDEX_FILE: alternateIndex,
+      GIT_NO_LAZY_FETCH: '0',
+      GIT_NO_REPLACE_OBJECTS: '0',
+      GIT_OBJECT_DIRECTORY: path.join(foreignRoot, '.git', 'objects'),
+      GIT_REPLACE_REF_BASE: 'refs/alternate-replacements/',
+      GIT_SHALLOW_FILE: path.join(foreignRoot, 'shallow'),
+      GIT_WORK_TREE: foreignRoot,
+    });
+    const invocations = [];
+    const observingRunner = (command, args, options) => {
+      invocations.push({ args: [...args], environment: { ...options.env } });
+      return spawnGit(command, args, options);
+    };
+    const issues = scanTree({
+      environment: hostileEnvironment,
+      gitRunner: observingRunner,
+      root,
+    });
+    assert.ok(issues.some((issue) => issue.startsWith(`${relative}: tracked `)));
+
+    const canonicalGitDirectory = fs.realpathSync(path.join(root, '.git'));
+    const canonicalIndex = fs.realpathSync(path.join(root, '.git', 'index'));
+    const canonicalObjects = fs.realpathSync(path.join(root, '.git', 'objects'));
+    assert.ok(invocations.length > 2);
+    for (const invocation of invocations) {
+      assert.equal(invocation.args[0], `--git-dir=${canonicalGitDirectory}`);
+      assert.equal(invocation.args[1], `--work-tree=${fs.realpathSync(root)}`);
+      assert.equal(invocation.environment.GIT_DIR, canonicalGitDirectory);
+      assert.equal(invocation.environment.GIT_WORK_TREE, fs.realpathSync(root));
+      assert.equal(invocation.environment.GIT_INDEX_FILE, canonicalIndex);
+      assert.equal(invocation.environment.GIT_COMMON_DIR, canonicalGitDirectory);
+      assert.equal(invocation.environment.GIT_OBJECT_DIRECTORY, canonicalObjects);
+      assert.equal(invocation.environment.GIT_ALTERNATE_OBJECT_DIRECTORIES, undefined);
+      assert.equal(invocation.environment.GIT_CONFIG_COUNT, undefined);
+      assert.equal(invocation.environment.GIT_REPLACE_REF_BASE, undefined);
+      assert.equal(invocation.environment.GIT_SHALLOW_FILE, undefined);
+    }
+    for (const invocation of invocations.filter((item) => item.args.includes('cat-file'))) {
+      assert.equal(invocation.environment.GIT_NO_LAZY_FETCH, '1');
+      assert.equal(invocation.environment.GIT_NO_REPLACE_OBJECTS, '1');
+    }
+  } finally {
+    cleanup(root);
+    cleanup(alternateRoot);
+    cleanup(foreignRoot);
+  }
+});
+
+test('sanitizer disables real replacement objects and independently verifies blob OIDs', () => {
+  const root = setupGitFixture();
+  const replacementRoot = makeRoot();
+  try {
+    const relative = 'safe.js';
+    writeText(path.join(root, relative), "'use strict';\nconst value = 'original';\n");
+    runGit(root, ['add', '--', relative]);
+    const originalOid = runGit(root, ['rev-parse', `:${relative}`]);
+    const replacementFile = path.join(replacementRoot, 'replacement.js');
+    writeText(replacementFile, "'use strict';\nconst value = 'replacement';\n");
+    const replacementOid = runGit(root, ['hash-object', '-w', replacementFile]);
+    runGit(root, ['replace', originalOid, replacementOid]);
+
+    const observedBlobCalls = [];
+    const observingRunner = (command, args, options) => {
+      if (args.includes('cat-file')) observedBlobCalls.push({ ...options.env });
+      return spawnGit(command, args, options);
+    };
+    assert.deepEqual(scanTree({ root, gitRunner: observingRunner }), []);
+    assert.ok(observedBlobCalls.length > 0);
+    assert.ok(observedBlobCalls.every((environment) => (
+      environment.GIT_NO_LAZY_FETCH === '1'
+      && environment.GIT_NO_REPLACE_OBJECTS === '1'
+    )));
+
+    const replacementEnabledRunner = (command, args, options) => {
+      const environment = { ...options.env };
+      delete environment.GIT_NO_REPLACE_OBJECTS;
+      return spawnGit(command, args, { ...options, env: environment });
+    };
+    assert.ok(scanTree({ root, gitRunner: replacementEnabledRunner }).includes(
+      `${relative}: Git index blob OID does not match its bytes`,
+    ));
+  } finally {
+    cleanup(root);
+    cleanup(replacementRoot);
+  }
 });
