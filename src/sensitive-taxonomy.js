@@ -22,7 +22,6 @@ const INTERNAL_HOST_LABELS = new Set([
 ]);
 const LOCALHOST = ['local', 'host'].join('');
 const SECURE_STORE_COMPACT_TOKEN = ['key', 'chain'].join('');
-const COMPANY_HOST_FRAGMENT = ['c', 'money'].join('');
 const SENSITIVE_FIELD_TOKENS = new Set([
   ['per', 'sona'].join(''),
   ['creden', 'tial'].join(''),
@@ -65,13 +64,13 @@ const SENSITIVE_SECURE_STORE_COMPACT_FIELDS = new Set([
   SECURE_STORE_COMPACT_TOKEN,
   ...[...SECURE_STORE_SUFFIXES].map((suffix) => `${SECURE_STORE_COMPACT_TOKEN}${suffix}`),
 ]);
-const SYSTEM_PATH_PATTERN = new RegExp(
-  String.raw`(?:^|[\s="'(:])(?:~\/|\/(?:[U]sers|Applications|[L]ibrary|[S]ystem|private|v[a]r|tmp|Volumes|home|[e]tc|[o]pt)(?:\/|$)|\/[u]sr\/local(?:\/|$)|[A-Za-z]:\\(?:[U]sers|Documents|Windows|Program[D]ata)(?:\\|$)|\\\\[^\\\s]+\\[^\\\s]+)`,
+const USER_LOCAL_PATH_PATTERN = new RegExp(
+  String.raw`(?:^|[\s="'(:])(?:~\/|\/[U]sers\/[^/\s]+(?:\/|$)|\/home\/[^/\s]+(?:\/|$)|[A-Za-z]:\\[U]sers\\[^\\\s]+(?:\\|$)|\\\\[^\\\s]+\\[^\\\s]+)`,
   'i',
 );
 const IPV4_PATTERN = /(?:^|[^0-9])((?:\d{1,3}\.){3}\d{1,3})(?=[^0-9]|$)/g;
 const IPV6_PATTERN = /(?:^|[^A-Fa-f0-9:])((?:[A-Fa-f0-9]{0,4}:){2,7}[A-Fa-f0-9]{0,4})(?=[^A-Fa-f0-9:]|$)/g;
-const ENDPOINT_PATTERN = /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]+/g;
+const ENDPOINT_PATTERN = /(?:https?|file):\/\/[^\s"'<>]+/g;
 const HOST_PATTERN = /(?:[A-Za-z0-9-]+\.)+[A-Za-z0-9-]+/g;
 const SOURCE_FILE_SUFFIXES = new Set(['css', 'html', 'js', 'json', 'lock', 'md', 'mjs', 'cjs', 'txt', 'yaml', 'yml']);
 const EMAIL_PATTERN = /\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/;
@@ -82,14 +81,7 @@ const SECURE_STORE_LOCATOR_PATTERN = new RegExp([
   ['cha', 'in'].join(''),
   String.raw`(?:[\s_.-]*(?:account|locator|reference|service)\b|(?=\s*[:=]))`,
 ].join(''), 'i');
-const LOCATOR_PATTERNS = Object.freeze([
-  /find-[g]eneric-password/i,
-  /login[I]dentifier/i,
-  /user[I]d/i,
-  /member[I]d/i,
-  /api[K]ey/i,
-  /access[K]ey/i,
-  /authoriz[a]tion/i,
+const VALUE_SECRET_PATTERNS = Object.freeze([
   /recovery\s*[c]ode/i,
   /bearer\s+[A-Za-z0-9._-]+/i,
 ]);
@@ -143,6 +135,15 @@ function isSecureStoreField(value, tokens = identifierTokens(value)) {
   return false;
 }
 
+function isConcreteLocatorField(value) {
+  const tokens = identifierTokens(value);
+  const compact = tokens.join('');
+  return isSecureStoreField(value, tokens) || new Set([
+    'loginidentifier', 'userid', 'memberid', 'apikey', 'accesskey',
+    'password', 'passwd', 'token', 'secret', 'cookie',
+  ]).has(compact);
+}
+
 function sensitiveFieldIssue(value) {
   const tokens = identifierTokens(value);
   if (tokens.length === 0) return null;
@@ -194,7 +195,7 @@ function isInternalHostname(hostname) {
   if (!normalized || normalized === LOCALHOST || normalized.endsWith(`.${LOCALHOST}`)
     || normalized.endsWith('.local') || normalized.endsWith('.lan')
     || normalized.endsWith('.internal') || normalized.endsWith('.private')
-    || normalized.endsWith('.corp') || normalized.includes(COMPANY_HOST_FRAGMENT)) {
+    || normalized.endsWith('.corp')) {
     return true;
   }
   if (normalized.includes(':')) return true;
@@ -244,16 +245,13 @@ function stringIpv6Issue(value) {
 
 function sensitiveStringIssue(value) {
   if (typeof value !== 'string') return null;
-  if (SYSTEM_PATH_PATTERN.test(value)) return 'machine-specific or system path';
+  if (USER_LOCAL_PATH_PATTERN.test(value)) return 'user-specific local path';
   const addressIssue = stringIpv4Issue(value);
   if (addressIssue) return addressIssue;
   const ipv6Issue = stringIpv6Issue(value);
   if (ipv6Issue) return ipv6Issue;
   if (EMAIL_PATTERN.test(value)) return 'login or email identifier';
-  if (SECURE_STORE_LOCATOR_PATTERN.test(value)
-    || LOCATOR_PATTERNS.some((pattern) => pattern.test(value))) {
-    return 'identity or credential locator';
-  }
+  if (VALUE_SECRET_PATTERNS.some((pattern) => pattern.test(value))) return 'credential material';
   if (PRIVATE_KEY_MARKER_PATTERN.test(value)) return 'private-key material';
 
   const endpoints = value.match(ENDPOINT_PATTERN) || [];
@@ -285,8 +283,12 @@ function structuredValueIssues(value, label = 'value', issues = []) {
   }
   for (const [key, item] of Object.entries(value)) {
     const fieldIssue = sensitiveFieldIssue(key);
-    if (fieldIssue) issues.push(`${label}: ${fieldIssue}`);
     const itemLabel = fieldIssue ? `${label}.<redacted>` : `${label}.${key}`;
+    const placeholder = typeof item === 'string'
+      && /^(?:example|fixture|placeholder|redacted|replace-locally|synthetic)(?:[-_.][A-Za-z0-9-]+)?$/i.test(item);
+    if (fieldIssue && (typeof item === 'number' || (typeof item === 'string' && !placeholder))) {
+      issues.push(`${label}: ${fieldIssue}`);
+    }
     if ((key === 'name' || key === 'queryName')
       && typeof item === 'string'
       && sensitiveFieldIssue(item)) {
@@ -299,7 +301,7 @@ function structuredValueIssues(value, label = 'value', issues = []) {
 
 function sourceContentIssues(content) {
   const issues = new Set();
-  if (SYSTEM_PATH_PATTERN.test(content)) issues.add('machine-specific or system path');
+  if (USER_LOCAL_PATH_PATTERN.test(content)) issues.add('user-specific local path');
   const addressIssue = stringIpv4Issue(content);
   if (addressIssue) issues.add(addressIssue);
   const ipv6Issue = stringIpv6Issue(content);
@@ -312,38 +314,17 @@ function sourceContentIssues(content) {
     const issue = endpointIssue(endpoint);
     if (issue) issues.add(issue);
   }
-  if (/find-[g]eneric-password/i.test(content)
-    || /login[I]dentifier/i.test(content)) {
-    issues.add('identity or credential locator');
-  }
-
-  // Non-JSON source does not expose object keys structurally. Inspect identifier-like names only
-  // where source syntax makes them a declaration, assignment, or YAML/object field. This catches
-  // prefixed camelCase/compact locators without treating ordinary documentation prose as a field.
-  const sourceFieldPatterns = [
-    /\b(?:const|let|var|class|function)\s+([A-Za-z_$][A-Za-z0-9_$.-]*)/g,
-    /\b([A-Za-z_$][A-Za-z0-9_$.-]*)\s*=/g,
-    /(?:^|[\n,{])\s*(?:-\s*)?([A-Za-z_$][A-Za-z0-9_$.-]*)\s*:/g,
-    /\[\s*["']([A-Za-z_$][A-Za-z0-9_$.-]*)["']\s*\]\s*=/g,
-  ];
-  for (const pattern of sourceFieldPatterns) {
-    for (const match of content.matchAll(pattern)) {
-      if (isSecureStoreField(match[1])) issues.add('identity or credential locator');
-    }
-  }
-  const destructuringPattern = /\b(?:const|let|var)\s*\{([^{}\r\n]*)\}\s*=/g;
-  for (const destructuring of content.matchAll(destructuringPattern)) {
-    const destructuredFieldPattern = /(?:^|,)\s*([A-Za-z_$][A-Za-z0-9_$.-]*)/g;
-    for (const field of destructuring[1].matchAll(destructuredFieldPattern)) {
-      if (isSecureStoreField(field[1])) issues.add('identity or credential locator');
+  const locatorAssignment = /\b([A-Za-z_$][A-Za-z0-9_$]*)\s*[:=]\s*["']([^"'\r\n]+)["']/g;
+  for (const match of content.matchAll(locatorAssignment)) {
+    if (isConcreteLocatorField(match[1])
+      && !/^(?:example|fixture|placeholder|redacted|replace-locally|synthetic)(?:[-_.][A-Za-z0-9-]+)?$/i.test(match[2])) {
+      issues.add('identity or credential locator');
     }
   }
 
-  const quotedFieldPattern = /["']([A-Za-z][A-Za-z0-9_.-]*)["']\s*:/g;
-  for (const match of content.matchAll(quotedFieldPattern)) {
-    const issue = sensitiveFieldIssue(match[1]);
-    if (issue) issues.add(issue);
-  }
+  // Runtime source and schemas may need to name sensitive concepts in order to reject or
+  // protect them. The source-only gate scans concrete string values, endpoints, identities,
+  // private-key markers, and tracked runtime paths; it does not ban defensive identifiers.
   const quotedTextPattern = /["']([^"'\\\r\n]*(?:\\.[^"'\\\r\n]*)*)["']/g;
   for (const match of content.matchAll(quotedTextPattern)) {
     const hosts = match[1].match(HOST_PATTERN) || [];

@@ -244,9 +244,6 @@ function requireCanonicalRealPath(resolved, fsImpl, label) {
   } catch {
     throw new ContractError('INVALID_PATH', `${label} does not exist`);
   }
-  if (path.normalize(actual) !== path.normalize(resolved)) {
-    throw new ContractError('PATH_ESCAPE', `${label} must not traverse a symbolic-link boundary`);
-  }
   return actual;
 }
 

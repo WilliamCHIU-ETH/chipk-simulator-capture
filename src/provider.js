@@ -1,14 +1,11 @@
 'use strict';
 
 const { validateRequest, validateResult } = require('./contract');
-const { ContractError } = require('./errors');
-const { validateCatalog } = require('./catalog');
-const { planRequest } = require('./planner');
-const { assessBuildReadiness, assessRunAuthorization } = require('./readiness');
+const { RuntimeAdapterError } = require('./runtime-adapter');
 
 const PROVIDER_ID = 'chipk-simulator-capture';
 
-function createResult({ requestId, toolVersion, status, artifacts = {}, evidence = {}, error = null }) {
+function createResult({ requestId, toolVersion, status, artifacts = [], evidence = {}, error = null }) {
   return validateResult({
     contractVersion: 1,
     requestId,
@@ -20,105 +17,99 @@ function createResult({ requestId, toolVersion, status, artifacts = {}, evidence
   });
 }
 
-function createProvider({ catalog, runtimeAdapter = null, toolVersion }) {
-  if (typeof toolVersion !== 'string' || !toolVersion.trim()) {
-    throw new ContractError('INVALID_PROVIDER', 'toolVersion must be a non-empty string');
+function requiredRoles(operation) {
+  return operation === 'screenshot'
+    ? ['screenshot', 'capture-manifest']
+    : ['raw-video', 'actions', 'recording-manifest'];
+}
+
+function validateCompletedArtifacts(operation, artifacts) {
+  const roles = artifacts.map((artifact) => artifact.role).sort();
+  const expected = requiredRoles(operation).sort();
+  if (roles.length !== expected.length || roles.some((role, index) => role !== expected[index])) {
+    throw new Error('runtime artifact bundle is incomplete');
   }
-  const catalogSnapshot = validateCatalog(catalog);
-  const runtimeSnapshot = runtimeAdapter && Object.freeze({
-    productionReady: runtimeAdapter.productionReady,
-    operations: Array.isArray(runtimeAdapter.operations) ? Object.freeze([...runtimeAdapter.operations]) : [],
-    execute: typeof runtimeAdapter.execute === 'function'
-      ? runtimeAdapter.execute.bind(runtimeAdapter)
-      : null,
-  });
-  const buildReadiness = assessBuildReadiness(catalogSnapshot, runtimeSnapshot);
+}
+
+function createProvider({ runtimeAdapter, toolVersion }) {
+  if (typeof toolVersion !== 'string' || !toolVersion.trim()) {
+    throw new TypeError('toolVersion must be a non-empty string');
+  }
+  if (!runtimeAdapter || runtimeAdapter.productionReady !== true
+    || typeof runtimeAdapter.execute !== 'function'
+    || !Array.isArray(runtimeAdapter.operations)) {
+    throw new TypeError('runtimeAdapter must ship an executable production boundary');
+  }
+  const operations = [...runtimeAdapter.operations];
+  if (!['screenshot', 'record'].every((operation) => operations.includes(operation))) {
+    throw new TypeError('runtimeAdapter must support screenshot and record');
+  }
 
   function capabilities() {
     return {
       schemaVersion: 1,
       providerId: PROVIDER_ID,
       toolVersion,
-      productionReady: buildReadiness.productionReady,
-      operations: buildReadiness.productionReady ? ['screenshot', 'record'] : [],
+      productionReady: true,
+      operations: ['screenshot', 'record'],
       planningAvailable: true,
+      executionCommand: 'chipk-capture acquire --request <absolute-json-file> --json',
       contracts: {
         request: 'contracts/capture-request.schema.json',
         result: 'contracts/capture-result.schema.json',
       },
-      readiness: buildReadiness,
-      limitations: buildReadiness.productionReady ? [] : [...buildReadiness.reasons],
+      catalogVersion: runtimeAdapter.catalogVersion,
+      runtimeConfiguration: {
+        source: 'provider-local-environment',
+        probedPerRequest: true,
+      },
     };
   }
 
-  function plan(requestInput) {
-    return planRequest(requestInput, catalogSnapshot);
-  }
-
-  async function execute(requestInput, context = {}) {
+  async function acquire(requestInput) {
     const request = validateRequest(requestInput);
-    const planValue = plan(request);
-    const authorization = assessRunAuthorization(buildReadiness, context);
-    if (!authorization.authorized) {
+    try {
+      const runtimeResult = await runtimeAdapter.execute(request);
+      if (!runtimeResult || !Array.isArray(runtimeResult.artifacts)
+        || !runtimeResult.evidence || typeof runtimeResult.evidence !== 'object') {
+        throw new Error('invalid runtime result');
+      }
+      validateCompletedArtifacts(request.operation, runtimeResult.artifacts);
       return createResult({
         requestId: request.requestId,
         toolVersion,
-        status: 'rejected',
-        evidence: { plan: planValue, readiness: buildReadiness, authorization },
-        error: {
-          code: 'PRODUCTION_NOT_READY',
-          message: 'Capture execution is unavailable; use the consumer fallback.',
-          retryable: false,
-        },
+        status: 'completed',
+        artifacts: runtimeResult.artifacts,
+        evidence: runtimeResult.evidence,
       });
-    }
-
-    let runtimeResult;
-    try {
-      runtimeResult = await runtimeSnapshot.execute({ request, plan: planValue });
-    } catch {
+    } catch (error) {
+      if (error instanceof RuntimeAdapterError) {
+        return createResult({
+          requestId: request.requestId,
+          toolVersion,
+          status: error.status,
+          evidence: error.evidence || {},
+          error: {
+            code: error.code,
+            message: error.message,
+            retryable: error.retryable,
+          },
+        });
+      }
       return createResult({
         requestId: request.requestId,
         toolVersion,
         status: 'failed',
-        evidence: { plan: planValue, readiness: buildReadiness },
         error: {
-          code: 'RUNTIME_ADAPTER_FAILED',
+          code: 'INVALID_RUNTIME_RESULT',
           message: 'Runtime adapter failed without a publishable result.',
           retryable: false,
         },
       });
     }
-    try {
-      const artifacts = runtimeResult && runtimeResult.artifacts;
-      const evidence = runtimeResult && runtimeResult.evidence;
-      if (!artifacts || typeof artifacts !== 'object' || Array.isArray(artifacts)
-        || !evidence || typeof evidence !== 'object' || Array.isArray(evidence)) {
-        throw new ContractError('INVALID_RUNTIME_RESULT', 'runtime result must contain object envelopes');
-      }
-      return createResult({
-        requestId: request.requestId,
-        toolVersion,
-        status: 'completed',
-        artifacts,
-        evidence: { plan: planValue, readiness: buildReadiness, runtime: evidence },
-      });
-    } catch {
-      return createResult({
-        requestId: request.requestId,
-        toolVersion,
-        status: 'failed',
-        evidence: { plan: planValue, readiness: buildReadiness },
-        error: {
-          code: 'INVALID_RUNTIME_RESULT',
-          message: 'Runtime adapter returned an invalid result.',
-          retryable: false,
-        },
-      });
-    }
   }
 
-  return Object.freeze({ capabilities, execute, plan });
+  return Object.freeze({ acquire, capabilities });
 }
 
-module.exports = { createProvider };
+module.exports = { createProvider, createResult, validateCompletedArtifacts };

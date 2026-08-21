@@ -1,0 +1,4 @@
+interface:
+  display_name: "ChipK Simulator Capture"
+  short_description: "從文案規劃並驗證籌碼K線 Simulator 素材"
+  default_prompt: "Use $chipk-simulator-capture to rank safe ChipK routes from my copy, prepare an audited plan, and capture only after the runtime gates pass."

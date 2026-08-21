@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/chipk-capture/personas-v1.json",
+  "title": "Local ChipK Capture Personas",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "personas"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "personas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "approved", "accessLevel", "bundleId", "keychainService", "keychainAccount"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+          "approved": { "type": "boolean" },
+          "accessLevel": { "const": "vip" },
+          "bundleId": { "type": "string", "pattern": ".*\\S.*" },
+          "keychainService": { "type": "string", "pattern": ".*\\S.*" },
+          "keychainAccount": { "type": "string", "pattern": ".*\\S.*" }
+        }
+      }
+    }
+  }
+}

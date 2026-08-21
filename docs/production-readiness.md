@@ -1,22 +1,29 @@
 # Production readiness
 
-The shipped repository is deliberately **not production-ready**.
+This checkout ships both reviewed operational catalog data and screenshot/record runtime logic, so
+`capabilities --json` reports `productionReady: true` with `screenshot` and `record` operations.
 
-`capabilities.productionReady` is computed from build inputs, not set by a CLI flag. The synthetic catalog, empty build-owned digest trust store, and missing runtime adapter independently keep the value false.
+That flag describes build capability, not current environment state. Each acquisition still
+verifies provider-local run attestations, an exact booted Simulator, installed App metadata, OCR,
+route readiness, approved session evidence, recording runner evidence, output freshness, hashes,
+and media properties as applicable.
 
-## Required external review
+## What clean-clone CI proves
 
-- Supply a minimal production catalog through a separate approved delivery mechanism.
-- Prove its source classification and SHA-256 digest without committing raw company snapshots. The digest is computed from recursively key-sorted catalog JSON with the top-level `sourceDigest` field omitted.
-- Add only that reviewed digest to `src/trust-store.js` through code review; a catalog-provided checksum is integrity evidence, not approval.
-- Implement and review a runtime adapter outside this source-only change.
-- Verify one dedicated Simulator, application/session boundary, overwrite protection, and immutable artifacts.
-- Run a fresh authorized end-to-end screenshot and recording acceptance test.
+- request/result schema behavior and stable stdout/exit semantics;
+- reviewed route and recipe invariants;
+- exact-device and session gates through injected runtime fakes;
+- screenshot/record orchestration and no-overwrite atomic publication;
+- relative artifact descriptors with SHA-256 and media metadata;
+- source-only tracked-path and content policy.
 
-Until every item is complete, consumers must use fallback and must not present a successful plan as capture evidence.
+CI does not prove that a current Simulator is booted, an approved session is active, dynamic App
+content matches marketing copy, or a fresh output is editorially suitable. Those remain per-run
+evidence.
 
-## Catalog refresh boundary
+## Runtime acceptance
 
-`chipk-refresh-catalog` compiles an explicit, schema-closed source bundle into deterministic catalog bytes inside an explicit output directory. It does not discover sibling repositories, fetch endpoints, read credentials, invoke a runtime adapter, or approve the resulting digest. Real source bundles and generated catalogs are runtime inputs and must remain in ignored `runtime-data/` or external controlled storage.
-
-The compiler rejects duplicate JSON members before parsing, company or internal endpoints, non-public addresses, system or machine paths, persona and identity fields, credential locators, duplicate route or parameter identities, symbolic-link boundaries, path traversal, and existing targets. Its output may be reviewed in a later change, but catalog compilation alone leaves `productionReady` false because `src/trust-store.js` remains build-owned and empty.
+Before archiving the old app source, validate one standalone provider run and one Marketing Video
+adapter run against the same provider contract. Keep the app copy recoverable until both pass.
+Actual Simulator mutation is never part of `npm run preflight` and requires explicit user
+authorization.

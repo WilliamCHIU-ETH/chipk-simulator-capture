@@ -1,78 +1,102 @@
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
 const packageJson = require('../package.json');
-const syntheticCatalog = require('../fixtures/synthetic/catalog.json');
 const { ContractError } = require('./errors');
+const { parseJsonStrict } = require('./strict-json');
 const { createProvider } = require('./provider');
-const { readJson } = require('./io');
+const { createRuntimeAdapter } = require('./runtime-adapter');
 
-function parseFlags(args) {
+const MAX_REQUEST_BYTES = 256 * 1024;
+
+function parseFlags(command, args) {
+  const allowed = command === 'capabilities' ? new Set(['--json']) : new Set(['--request', '--json']);
   const flags = {};
   for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === '--json' || arg === '--authorize-run' || arg === '--confirm-dedicated-simulator') {
-      flags[arg.slice(2)] = true;
+    const argument = args[index];
+    if (!allowed.has(argument)) {
+      throw new ContractError('INVALID_CLI', `unsupported argument: ${argument}`);
+    }
+    if (Object.hasOwn(flags, argument)) {
+      throw new ContractError('INVALID_CLI', `${argument} must not be repeated`);
+    }
+    if (argument === '--json') {
+      flags.json = true;
       continue;
     }
-    if (arg === '--request' || arg === '--catalog') {
-      const value = args[index + 1];
-      if (!value || value.startsWith('--')) throw new ContractError('INVALID_CLI', `${arg} requires a path`);
-      flags[arg.slice(2)] = value;
-      index += 1;
-      continue;
+    const value = args[index + 1];
+    if (!value || value.startsWith('--')) {
+      throw new ContractError('INVALID_CLI', '--request requires an absolute JSON file');
     }
-    throw new ContractError('INVALID_CLI', `unsupported argument: ${arg}`);
+    flags.request = value;
+    index += 1;
+  }
+  if (!flags.json) throw new ContractError('INVALID_CLI', '--json is required');
+  if (command === 'acquire' && !flags.request) {
+    throw new ContractError('INVALID_CLI', '--request is required');
   }
   return flags;
+}
+
+function readRequest(filePath) {
+  if (!path.isAbsolute(filePath)) {
+    throw new ContractError('INVALID_CLI', '--request must be an absolute path');
+  }
+  let metadata;
+  try {
+    metadata = fs.lstatSync(filePath);
+  } catch {
+    throw new ContractError('INVALID_CLI', 'request file is unavailable');
+  }
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > MAX_REQUEST_BYTES) {
+    throw new ContractError('INVALID_CLI', 'request must be a small regular non-symbolic-link file');
+  }
+  let content;
+  try {
+    content = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    throw new ContractError('INVALID_CLI', 'request file is unreadable');
+  }
+  return parseJsonStrict(content, 'request', 'INVALID_REQUEST');
 }
 
 function printJson(stream, value) {
   stream.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-function createDefaultProvider(catalog = syntheticCatalog) {
-  return createProvider({ catalog, toolVersion: packageJson.version });
+function createDefaultProvider(options = {}) {
+  return createProvider({
+    runtimeAdapter: options.runtimeAdapter || createRuntimeAdapter(options.runtimeOptions),
+    toolVersion: packageJson.version,
+  });
 }
 
 function usage() {
-  return 'Usage: chipk-capture --version | capabilities [--catalog <file>] --json | plan --request <file> [--catalog <file>] --json | capture|record --request <file> --json\n';
+  return [
+    'Usage:',
+    '  chipk-capture capabilities --json',
+    '  chipk-capture acquire --request <absolute-json-file> --json',
+  ].join('\n');
 }
 
-async function main(argv, streams = { stdout: process.stdout, stderr: process.stderr }, cwd = process.cwd()) {
+async function main(
+  argv,
+  streams = { stdout: process.stdout, stderr: process.stderr },
+  options = {},
+) {
   try {
     const [command, ...args] = argv;
-    if (command === '--version' || command === 'version') {
-      streams.stdout.write(`${packageJson.version}\n`);
-      return 0;
+    if (!['capabilities', 'acquire'].includes(command)) {
+      throw new ContractError('INVALID_CLI', 'command must be capabilities or acquire');
     }
+    const flags = parseFlags(command, args);
+    const provider = options.provider || createDefaultProvider(options);
     if (command === 'capabilities') {
-      const flags = parseFlags(args);
-      const catalog = flags.catalog ? readJson(flags.catalog, cwd) : syntheticCatalog;
-      printJson(streams.stdout, createDefaultProvider(catalog).capabilities());
+      printJson(streams.stdout, provider.capabilities());
       return 0;
     }
-    if (!['plan', 'capture', 'record'].includes(command)) {
-      streams.stderr.write(usage());
-      return 2;
-    }
-
-    const flags = parseFlags(args);
-    if (!flags.request) throw new ContractError('INVALID_CLI', '--request is required');
-    const request = readJson(flags.request, cwd);
-    const catalog = flags.catalog ? readJson(flags.catalog, cwd) : syntheticCatalog;
-    const provider = createDefaultProvider(catalog);
-
-    if (command === 'plan') {
-      printJson(streams.stdout, provider.plan(request));
-      return 0;
-    }
-    if (request.operation !== command.replace('capture', 'screenshot')) {
-      throw new ContractError('INVALID_REQUEST', `request operation does not match ${command}`);
-    }
-    const result = await provider.execute(request, {
-      operatorAuthorized: flags['authorize-run'] === true,
-      dedicatedSimulatorConfirmed: flags['confirm-dedicated-simulator'] === true,
-    });
+    const result = await provider.acquire(readRequest(flags.request));
     printJson(streams.stdout, result);
     return result.status === 'completed' ? 0 : 3;
   } catch (error) {
@@ -80,9 +104,9 @@ async function main(argv, streams = { stdout: process.stdout, stderr: process.st
     const message = error instanceof ContractError
       ? error.message
       : 'Command failed without a publishable diagnostic.';
-    printJson(streams.stderr, { error: { code, message } });
+    printJson(streams.stderr, { error: { code, message }, usage: usage() });
     return 2;
   }
 }
 
-module.exports = { createDefaultProvider, main, parseFlags, usage };
+module.exports = { createDefaultProvider, main, parseFlags, readRequest, usage };

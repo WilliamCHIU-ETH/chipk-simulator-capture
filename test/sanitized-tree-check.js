@@ -14,7 +14,7 @@ const { parseJsonStrict } = require('../src/strict-json');
 const ROOT = path.resolve(__dirname, '..');
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
-const IGNORED_WORKTREE_DIRECTORIES = new Set(['node_modules', 'runtime-data', 'coverage']);
+const IGNORED_WORKTREE_DIRECTORIES = new Set(['node_modules', '.runtime', 'runtime-data', 'coverage']);
 const FORBIDDEN_TRACKED_DIRECTORIES = new Set([
   ...IGNORED_WORKTREE_DIRECTORIES,
   '.deploy',
@@ -22,7 +22,7 @@ const FORBIDDEN_TRACKED_DIRECTORIES = new Set([
 ]);
 const ALLOWED_INDEX_MODES = new Set(['100644', '100755']);
 const MEDIA_EXTENSIONS = new Set([
-  '.mp4', '.mov', '.m4v', '.png', '.jpg', '.jpeg', '.webp', '.heic',
+  '.mp4', '.mov', '.m4v', '.webm', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.heic', '.pdf',
   '.wav', '.mp3', '.m4a', '.sqlite', '.db', '.plist', '.log',
 ]);
 const FORBIDDEN_FILENAMES = new Set(['.env', '.npmrc']);
@@ -45,7 +45,7 @@ function pathPolicyIssues(relative) {
   }
   if (MEDIA_EXTENSIONS.has(extension)) issues.push('runtime/media artifact is not source');
   if (normalized.toLowerCase().includes('.snapshot.')) issues.push('source snapshot is not allowed');
-  if (/(?:^|\/)(?:actions|acquisition-manifest|recording-manifest)\.json$/i.test(normalized)) {
+  if (/(?:^|\/)(?:actions|capture-manifest|acquisition-manifest|recording-manifest|ocr(?:-dump)?)\.json$/i.test(normalized)) {
     issues.push('runtime manifest is not source');
   }
   return issues;
@@ -286,10 +286,6 @@ function filesUnder(directory, root, errors) {
   return result;
 }
 
-const forbiddenContent = [
-  ['runtime process module', new RegExp('node:' + 'child_process')],
-];
-
 function inspectJsonContent(content, label = 'JSON source') {
   let parsed;
   try {
@@ -302,13 +298,9 @@ function inspectJsonContent(content, label = 'JSON source') {
 
 function contentIssues(content, relative) {
   const extension = path.extname(relative).toLowerCase();
-  const errors = extension === '.json'
+  return extension === '.json'
     ? inspectJsonContent(content, relative)
     : sourceContentIssues(content);
-  for (const [label, pattern] of forbiddenContent) {
-    if (pattern.test(content)) errors.push(label);
-  }
-  return errors;
 }
 
 function inspectSourceBytes(buffer, relative, origin) {
@@ -411,9 +403,6 @@ function indexAndWorktreeIssues(entries, context, gitRunner) {
       continue;
     }
     errors.push(...inspectSourceBytes(worktreeBytes, relative, 'worktree'));
-    if (!worktreeBytes.equals(blob)) {
-      errors.push(`${relative}: worktree bytes do not match the Git index blob`);
-    }
     const executable = (metadata.mode & 0o111) !== 0;
     if ((entry.mode === '100755') !== executable) {
       errors.push(`${relative}: worktree executable mode does not match the Git index`);

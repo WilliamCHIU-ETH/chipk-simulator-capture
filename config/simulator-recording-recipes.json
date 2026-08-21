@@ -1,0 +1,322 @@
+{
+  "schemaVersion": 1,
+  "recipes": [
+    {
+      "id": "renbao.kline-main-force-swipe",
+      "version": 1,
+      "profile": "strict_kline_interaction",
+      "mode": "test",
+      "routeId": "chipk.stock.kline",
+      "stock": {
+        "id": "2324",
+        "name": "仁寶"
+      },
+      "recordingDuration": {
+        "targetMs": 12000,
+        "minMs": 10000,
+        "maxMs": 15000
+      },
+      "material": {
+        "purpose": "show_stock_kline_and_main_force_interaction",
+        "supportsCopy": [
+          "判斷關鍵在43.2元和量能。",
+          "開啟籌碼K線，進「精選」看主力動向。"
+        ],
+        "doesNotProve": [
+          "精選頁導航",
+          "歷史價格或日期與目前畫面一致"
+        ]
+      },
+      "actions": [
+        {
+          "id": "ready-kline-renbao",
+          "type": "readiness",
+          "selectors": [
+            {
+              "kind": "text",
+              "value": "K線"
+            },
+            {
+              "kind": "text",
+              "value": "2324"
+            },
+            {
+              "kind": "text",
+              "value": "仁寶"
+            },
+            {
+              "kind": "text",
+              "value": "技術"
+            }
+          ],
+          "timeoutMs": 30000,
+          "zoomFocus": {
+            "x": 0.12,
+            "y": 0.22,
+            "width": 0.76,
+            "height": 0.5
+          }
+        },
+        {
+          "id": "tap-bottom-main-force",
+          "type": "tap",
+          "execution": {
+            "strategy": "reviewed_coordinate",
+            "point": {
+              "x": 0.3557,
+              "y": 0.9405
+            },
+            "reviewedLayout": {
+              "deviceName": "iPhone 17 Pro",
+              "runtime": "iOS 26.5",
+              "orientation": "portrait",
+              "screenshotWidth": 1206,
+              "screenshotHeight": 2622,
+              "interactionWidth": 402,
+              "interactionHeight": 874
+            }
+          },
+          "touchPoint": {
+            "x": 0.3557,
+            "y": 0.9405
+          },
+          "zoomFocus": {
+            "x": 0.12,
+            "y": 0.88,
+            "width": 0.5,
+            "height": 0.12
+          },
+          "waitToSettleTimeoutMs": 500
+        },
+        {
+          "id": "long-press-kline-chart",
+          "type": "tap",
+          "execution": {
+            "strategy": "reviewed_coordinate",
+            "point": {
+              "x": 0.8209,
+              "y": 0.492
+            },
+            "longPress": true,
+            "reviewedLayout": {
+              "deviceName": "iPhone 17 Pro",
+              "runtime": "iOS 26.5",
+              "orientation": "portrait",
+              "screenshotWidth": 1206,
+              "screenshotHeight": 2622,
+              "interactionWidth": 402,
+              "interactionHeight": 874
+            }
+          },
+          "touchPoint": {
+            "x": 0.8209,
+            "y": 0.492
+          },
+          "zoomFocus": {
+            "x": 0.52,
+            "y": 0.34,
+            "width": 0.42,
+            "height": 0.34
+          },
+          "waitToSettleTimeoutMs": 500
+        },
+        {
+          "id": "swipe-kline-chart-left",
+          "type": "swipe",
+          "start": {
+            "x": 0.8209,
+            "y": 0.492
+          },
+          "end": {
+            "x": 0.2736,
+            "y": 0.492
+          },
+          "durationMs": 900,
+          "waitToSettleTimeoutMs": 500,
+          "touchPath": {
+            "start": {
+              "x": 0.8209,
+              "y": 0.492
+            },
+            "end": {
+              "x": 0.2736,
+              "y": 0.492
+            }
+          },
+          "zoomFocus": {
+            "x": 0.05,
+            "y": 0.34,
+            "width": 0.9,
+            "height": 0.42
+          }
+        },
+        {
+          "id": "assert-main-force-panel",
+          "type": "assert",
+          "selectors": [
+            {
+              "kind": "text",
+              "value": "主力買賣超"
+            },
+            {
+              "kind": "text",
+              "value": "2324"
+            },
+            {
+              "kind": "text",
+              "value": "買賣家數差"
+            },
+            {
+              "kind": "text",
+              "value": "K線"
+            }
+          ],
+          "absentSelectors": [
+            {
+              "kind": "text",
+              "value": "籌碼集中"
+            }
+          ],
+          "timeoutMs": 15000,
+          "zoomFocus": {
+            "x": 0.04,
+            "y": 0.58,
+            "width": 0.92,
+            "height": 0.35
+          }
+        },
+        {
+          "id": "hold-main-force-result",
+          "type": "hold",
+          "durationMs": 2500,
+          "zoomFocus": {
+            "x": 0.04,
+            "y": 0.52,
+            "width": 0.92,
+            "height": 0.44
+          }
+        }
+      ]
+    },
+    {
+      "id": "renbao.kline-tab-switch-benchmark",
+      "version": 1,
+      "profile": "diagnostic_tab_switch_benchmark",
+      "mode": "test",
+      "routeId": "chipk.stock.kline",
+      "stock": {
+        "id": "2324",
+        "name": "仁寶"
+      },
+      "recordingDuration": {
+        "targetMs": 3000,
+        "minMs": 1000,
+        "maxMs": 60000
+      },
+      "material": {
+        "purpose": "diagnose_single_reversible_kline_tab_switch_recording_pipeline",
+        "supportsCopy": [
+          "診斷一次可逆的下方「主力」 Tab 點擊與真實錄影管線",
+          "驗證點擊後出現主力買賣超與買賣家數差"
+        ],
+        "doesNotProve": [
+          "錄影可直接作為正式行銷素材",
+          "歷史價格或日期與目前畫面一致"
+        ]
+      },
+      "actions": [
+        {
+          "id": "ready-kline-renbao-benchmark",
+          "type": "readiness",
+          "selectors": [
+            {
+              "kind": "text",
+              "value": "K線"
+            },
+            {
+              "kind": "text",
+              "value": "2324"
+            },
+            {
+              "kind": "text",
+              "value": "技術"
+            }
+          ],
+          "timeoutMs": 30000,
+          "zoomFocus": {
+            "x": 0.12,
+            "y": 0.22,
+            "width": 0.76,
+            "height": 0.5
+          }
+        },
+        {
+          "id": "tap-bottom-main-force-benchmark",
+          "type": "tap",
+          "execution": {
+            "strategy": "reviewed_coordinate",
+            "point": {
+              "x": 0.3557,
+              "y": 0.9405
+            },
+            "reviewedLayout": {
+              "deviceName": "iPhone 17 Pro",
+              "runtime": "iOS 26.5",
+              "orientation": "portrait",
+              "screenshotWidth": 1206,
+              "screenshotHeight": 2622,
+              "interactionWidth": 402,
+              "interactionHeight": 874
+            }
+          },
+          "touchPoint": {
+            "x": 0.3557,
+            "y": 0.9405
+          },
+          "zoomFocus": {
+            "x": 0.12,
+            "y": 0.88,
+            "width": 0.5,
+            "height": 0.12
+          },
+          "waitToSettleTimeoutMs": 500
+        },
+        {
+          "id": "assert-tab-switch-main-force-result",
+          "type": "assert",
+          "selectors": [
+            {
+              "kind": "text",
+              "value": "主力買賣超"
+            },
+            {
+              "kind": "text",
+              "value": "買賣家數差"
+            },
+            {
+              "kind": "text",
+              "value": "2324"
+            },
+            {
+              "kind": "text",
+              "value": "K線"
+            }
+          ],
+          "absentSelectors": [
+            {
+              "kind": "text",
+              "value": "籌碼集中"
+            }
+          ],
+          "timeoutMs": 15000,
+          "zoomFocus": {
+            "x": 0.04,
+            "y": 0.52,
+            "width": 0.92,
+            "height": 0.44
+          }
+        }
+      ]
+    }
+  ]
+}

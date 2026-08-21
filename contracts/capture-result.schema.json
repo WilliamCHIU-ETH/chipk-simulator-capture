@@ -7,7 +7,7 @@
   "required": ["contractVersion", "requestId", "provider", "status", "artifacts", "evidence", "error"],
   "properties": {
     "contractVersion": { "const": 1 },
-    "requestId": { "type": "string", "pattern": ".*\\S.*" },
+    "requestId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
     "provider": {
       "type": "object",
       "additionalProperties": false,
@@ -18,7 +18,10 @@
       }
     },
     "status": { "enum": ["completed", "rejected", "failed", "human_action_required"] },
-    "artifacts": { "type": "object" },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" }
+    },
     "evidence": { "type": "object" },
     "error": {
       "type": ["object", "null"],
@@ -29,6 +32,70 @@
         "message": { "type": "string", "pattern": ".*\\S.*" },
         "retryable": { "type": "boolean" }
       }
+    }
+  },
+  "$defs": {
+    "media": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "properties": {
+        "codec": { "type": "string", "pattern": ".*\\S.*" },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "durationSeconds": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "kind", "relativePath", "sha256", "mimeType"],
+      "properties": {
+        "role": { "enum": ["screenshot", "capture-manifest", "raw-video", "actions", "recording-manifest"] },
+        "kind": { "enum": ["image", "video", "json"] },
+        "relativePath": { "type": "string", "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/]+(?:/[^/]+)*$" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "mimeType": { "enum": ["image/png", "video/mp4", "application/json"] },
+        "media": { "$ref": "#/$defs/media" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "role": { "const": "screenshot" },
+            "kind": { "const": "image" },
+            "mimeType": { "const": "image/png" },
+            "media": {
+              "allOf": [
+                { "$ref": "#/$defs/media" },
+                { "not": { "anyOf": [{ "required": ["codec"] }, { "required": ["durationSeconds"] }] } }
+              ]
+            }
+          },
+          "required": ["media"]
+        },
+        {
+          "properties": {
+            "role": { "const": "raw-video" },
+            "kind": { "const": "video" },
+            "mimeType": { "const": "video/mp4" },
+            "media": {
+              "allOf": [
+                { "$ref": "#/$defs/media" },
+                { "required": ["codec", "durationSeconds"] }
+              ]
+            }
+          },
+          "required": ["media"]
+        },
+        {
+          "properties": {
+            "role": { "enum": ["capture-manifest", "actions", "recording-manifest"] },
+            "kind": { "const": "json" },
+            "mimeType": { "const": "application/json" }
+          },
+          "not": { "required": ["media"] }
+        }
+      ]
     }
   }
 }
