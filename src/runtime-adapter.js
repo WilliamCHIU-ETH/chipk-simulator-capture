@@ -300,7 +300,8 @@ function createRuntimeAdapter(options = {}) {
           {
             routeSelection: 'catalog_exact_match',
             navigation: 'expected_texts_verified',
-            material: result.verification?.contentTexts?.missing?.length === 0
+            material: planValue.contentTexts.length > 0
+              && result.verification?.contentTexts?.missing?.length === 0
               ? 'captured_content_observed'
               : 'captured_pending_human_review',
             catalogVersion: catalog.catalogVersion,

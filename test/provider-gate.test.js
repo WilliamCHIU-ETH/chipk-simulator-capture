@@ -85,7 +85,26 @@ test('screenshot acquire returns only relative typed artifacts', async (t) => {
   assert.deepEqual(result.artifacts.map((artifact) => artifact.role), ['screenshot', 'capture-manifest']);
   assert.deepEqual(result.artifacts[0].media, { width: 12, height: 34 });
   assert.equal(result.artifacts.every((artifact) => !path.isAbsolute(artifact.relativePath)), true);
+  assert.equal(result.evidence.material, 'captured_content_observed');
   assert.doesNotThrow(() => validateResult(result));
+});
+
+test('screenshot with no content evidence stays pending human review', async (t) => {
+  const outputDirectory = tempDirectory(t);
+  const runtimeAdapter = createRuntimeAdapter({
+    environment: runEnvironment,
+    captureRoute: async (_catalog, input) => {
+      fs.writeFileSync(input.output, pngBytes());
+      fs.writeFileSync(input.manifest, '{"schemaVersion":1}\n');
+      return { verification: { contentTexts: { expected: [], observed: [], missing: [] } } };
+    },
+  });
+  const provider = createProvider({ runtimeAdapter, toolVersion: 'test' });
+  const result = await provider.acquire(request(outputDirectory, {
+    target: { routeId: 'chipk.index-content.realtime' },
+  }));
+  assert.equal(result.status, 'completed');
+  assert.equal(result.evidence.material, 'captured_pending_human_review');
 });
 
 test('screenshot post-publication validation failure rolls back the fresh exact bundle', async (t) => {
