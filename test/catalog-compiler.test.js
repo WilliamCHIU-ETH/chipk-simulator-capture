@@ -235,9 +235,9 @@ test('equivalent route and object ordering produces identical catalog bytes', ()
 test('a compiled production candidate is normalized but cannot approve its own digest', () => {
   const candidate = clone(sourceFixture);
   candidate.classification = 'production-reviewed';
-  candidate.baseUrl = 'https://example.invalid';
+  candidate.baseUrl = 'https://example.com';
   const compiled = compileCatalogBytes(candidate).catalog;
-  assert.equal(compiled.baseUrl, 'https://example.invalid/');
+  assert.equal(compiled.baseUrl, 'https://example.com/');
   assert.equal(compiled.sourceDigest, canonicalCatalogDigest(compiled));
 
   const provider = createProvider({ catalog: compiled, toolVersion: 'test' });

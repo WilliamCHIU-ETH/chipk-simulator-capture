@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "catalogVersion": "synthetic-refresh-v1",
   "classification": "synthetic",
-  "baseUrl": "chipk-fixture://refresh.invalid/landing",
+  "baseUrl": "chipk-fixture://capture.invalid/landing",
   "routes": [
     {
       "id": "chipk.fixture.stock-overview",
