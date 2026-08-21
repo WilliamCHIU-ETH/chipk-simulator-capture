@@ -26,6 +26,48 @@ npm run preflight
 The tests exercise the full route, recipe, runtime orchestration, atomic-publication, and JSON
 adapter logic with injected local fakes. They do not operate a Simulator or create tracked media.
 
+## Versioned installation
+
+Each release has one identity across `package.json`, `capabilities.toolVersion`, and its annotated
+Git tag `v<version>`. A consumer pins the exact tag and resolved commit; a floating branch or an
+unversioned executable found on `PATH` is not a reproducible installation.
+
+After `v0.2.0` is published:
+
+```bash
+git clone --branch v0.2.0 --depth 1 \
+  https://github.com/WilliamCHIU-ETH/chipk-simulator-capture.git
+cd chipk-simulator-capture
+npm ci
+npm run preflight
+./bin/chipk-capture.js capabilities --json
+```
+
+Marketing Video keeps the absolute executable path in local ignored configuration, not in Git:
+
+```bash
+export CHIPK_CAPTURE_BIN='/absolute/path/to/chipk-simulator-capture/bin/chipk-capture.js'
+```
+
+The provider stays an optional external executable. It is not copied into Marketing Video and is
+not added to that application's package dependencies.
+
+Before creating a release tag, run provider preflight, the cross-repository compatibility test,
+and Marketing Video's provider-free regression against the final commits. Record the exact tag and
+commit in the consumer compatibility lock only after all three pass.
+
+## Cross-repository conformance
+
+```bash
+npm run test:conformance
+```
+
+`test/conformance-cli.js` is a test-only executable for the Marketing Video compatibility suite.
+It calls the production CLI, validators, planner, and runtime adapter, but injects a deterministic
+screenshot writer. Its PNG and manifest are created only in the caller-owned temporary output
+directory. It never calls Simulator, Keychain, network, or paid services and is not a second
+production Port.
+
 ## Stable CLI/JSON Port
 
 ```bash
