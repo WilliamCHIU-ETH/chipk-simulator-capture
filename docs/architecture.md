@@ -1,30 +1,41 @@
 # Architecture boundary
 
 ```text
-request JSON
-    │
-    ▼
-contract validator ──► catalog planner ──► immutable plan
-                                  │
-                                  ▼
-                           production gate
-                                  │
-                 ┌────────────────┴────────────────┐
-                 ▼                                 ▼
-          rejected result                 runtime adapter
-          (shipped default)               (not shipped)
+Capture Request v1
+      │
+      ▼
+closed validator ──► operational catalog / recipe ──► runtime adapter
+                                                     │
+                         exact Simulator + checks ◄──┘
+                                                     │
+                                                     ▼
+                                      caller outputDirectory only
+                                                     │
+                                                     ▼
+                                           Capture Result v1
 ```
 
-The repository owns request validation, route planning, readiness evaluation, and result normalization. It does not own Marketing Video fallback policy, Project asset import, presentation effects, or delivery QA.
+The provider owns the catalog, deterministic planning, exact-device preflight, screenshot/record
+execution, evidence manifests, hashes, media metadata, and atomic publication. Marketing Video
+owns whether to prefer/require/disable the provider, fallback, Project asset import, framing,
+editing, rendering, and delivery QA.
 
-## Source-only boundary
+## Stable boundary
 
-The committed catalog is marked `synthetic`; it validates behavior without encoding a real product route. No runtime adapter is included. As a result, the default provider reports `productionReady: false` and enables planning only.
+Marketing Video invokes `chipk-capture acquire --request <absolute-json-file> --json`. It does not
+import a provider module. Request and result schemas are closed and versioned. Successful artifact
+descriptors contain only paths relative to the caller's output directory.
 
-Screenshot or recording execution requires all of the following:
+Simulator UDID and the authorized/dedicated/session attestations are process environment owned by
+the provider runtime. They are deliberately outside Request v1 so the product Port remains about
+material intent rather than provider implementation details.
 
-1. a separately reviewed catalog marked `production-reviewed` with a SHA-256 source digest that is present in the build-owned trust store;
-2. a runtime adapter that explicitly reports `productionReady: true` and supports the requested operation;
-3. caller attestations for an authorized run and a dedicated Simulator.
+## Failure boundary
 
-The shipped trust store is empty, so a runtime caller cannot self-promote a catalog by recomputing its checksum. Adding a production digest requires a reviewed source change. The gate is evaluated before the provider calls the adapter; CI never accesses a Simulator, network, credential store, or provider.
+- CLI or request syntax faults: JSON error on stderr, exit 2.
+- Valid requests that cannot run or complete: full typed result on stdout, exit 3.
+- Completed acquisition: full result on stdout, exit 0.
+- No operation overwrites an artifact or publishes a partial final bundle.
+
+`completed` means acquisition completed. Material evidence may still state
+`captured_pending_human_review`; final editorial suitability remains outside this provider.

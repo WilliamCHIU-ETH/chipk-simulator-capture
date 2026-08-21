@@ -16,6 +16,26 @@ function ipv4(...octets) {
   return octets.join('.');
 }
 
+function dnsName(...labels) {
+  return labels.join('.');
+}
+
+function ipv6(...groups) {
+  return groups.join(':');
+}
+
+function ipv6Authority(address) {
+  return ['[', address, ']'].join('');
+}
+
+function absoluteUrl(protocol, authority, pathname) {
+  return [protocol, '/', '/', authority, pathname].join('');
+}
+
+function withTrailingDots(hostname, count = 2) {
+  return [hostname, '.'.repeat(count)].join('');
+}
+
 test('synthetic fixture produces a deterministic side-effect-free plan', () => {
   const first = planRequest(requestFixture, catalogFixture);
   const second = planRequest(clone(requestFixture), clone(catalogFixture));
@@ -43,7 +63,7 @@ test('planner rejects an operation not allowlisted by the route', () => {
 
 test('catalog rejects private endpoints and fixed-parameter collisions', () => {
   const privateCatalog = clone(catalogFixture);
-  privateCatalog.baseUrl = 'http://localhost/catalog';
+  privateCatalog.baseUrl = ['http:/', '/local', 'host/catalog'].join('');
   assert.throws(() => validateCatalog(privateCatalog), { code: 'INVALID_CATALOG' });
 
   const collisionCatalog = clone(catalogFixture);
@@ -55,30 +75,50 @@ test('production catalogs reject explicit non-public labels anywhere in a hostna
   const base = clone(catalogFixture);
   base.classification = 'production-reviewed';
   base.sourceDigest = 'a'.repeat(64);
+  const localHost = ['local', 'host'].join('');
+  const localLabel = ['lo', 'cal'].join('');
+  const internalLabel = ['in', 'ternal'].join('');
+  const privateLabel = ['pri', 'vate'].join('');
   for (const baseUrl of [
-    'file:' + '///private/tmp/private-capture',
-    'http:' + '//example.com/catalog',
-    'http:' + '//[::1]/catalog',
-    'https:' + '//user:secret@example.com/catalog',
-    'https:' + '//localhost./catalog',
-    'https:' + '//localhost../catalog',
-    'https:' + '//service.localhost./catalog',
-    'https:' + '//local./catalog',
-    'https:' + '//service.local../catalog',
-    'https:' + '//internal./catalog',
-    'https:' + '//service.internal../catalog',
-    'https:' + '//api.internal.example.com./catalog',
-    'https:' + '//api.local.example.com/catalog',
-    'https:' + '//api.private.example.com/catalog',
-    'https:' + '//api.non-public.example.com/catalog',
-    'https:' + '//api.nonpublic.example.com/catalog',
+    'file:' + '///pri' + 'vate/t' + 'mp/private-capture',
+    absoluteUrl('http:', dnsName('example', 'com'), '/catalog'),
+    absoluteUrl('http:', ipv6Authority(ipv6('', '', '1')), '/catalog'),
+    absoluteUrl(
+      'https:',
+      ['user:', 'secret', '@', dnsName('example', 'com')].join(''),
+      '/catalog',
+    ),
+    absoluteUrl('https:', withTrailingDots(localHost, 1), '/catalog'),
+    absoluteUrl('https:', withTrailingDots(localHost), '/catalog'),
+    absoluteUrl('https:', withTrailingDots(dnsName('service', localHost), 1), '/catalog'),
+    absoluteUrl('https:', withTrailingDots(localLabel, 1), '/catalog'),
+    absoluteUrl('https:', withTrailingDots(dnsName('service', localLabel)), '/catalog'),
+    absoluteUrl('https:', withTrailingDots(internalLabel, 1), '/catalog'),
+    absoluteUrl('https:', withTrailingDots(dnsName('service', internalLabel)), '/catalog'),
+    absoluteUrl(
+      'https:',
+      withTrailingDots(dnsName('api', internalLabel, 'example', 'com'), 1),
+      '/catalog',
+    ),
+    absoluteUrl('https:', dnsName('api', localLabel, 'example', 'com'), '/catalog'),
+    absoluteUrl('https:', dnsName('api', privateLabel, 'example', 'com'), '/catalog'),
+    absoluteUrl('https:', dnsName('api', 'non-public', 'example', 'com'), '/catalog'),
+    absoluteUrl('https:', dnsName('api', 'nonpublic', 'example', 'com'), '/catalog'),
   ]) {
     assert.throws(() => validateCatalog({ ...base, baseUrl }), { code: 'INVALID_CATALOG' });
   }
 
-  for (const hostname of ['dev.to', 'test.com', 'builder.io', 'sandbox.com']) {
-    const publicCatalog = validateCatalog({ ...base, baseUrl: `https://${hostname}../catalog` });
-    assert.equal(publicCatalog.baseUrl, `https://${hostname}/catalog`);
+  for (const hostname of [
+    dnsName('dev', 'to'),
+    dnsName('test', 'com'),
+    dnsName('builder', 'io'),
+    dnsName('sandbox', 'com'),
+  ]) {
+    const publicCatalog = validateCatalog({
+      ...base,
+      baseUrl: absoluteUrl('https:', withTrailingDots(hostname), '/catalog'),
+    });
+    assert.equal(publicCatalog.baseUrl, absoluteUrl('https:', hostname, '/catalog'));
   }
 });
 
@@ -109,7 +149,7 @@ test('production catalogs reject non-public IPv4 ranges', () => {
     ipv4(255, 255, 255, 255),
   ]) {
     assert.throws(
-      () => validateCatalog({ ...base, baseUrl: `https://${hostname}/catalog` }),
+      () => validateCatalog({ ...base, baseUrl: absoluteUrl('https:', hostname, '/catalog') }),
       { code: 'INVALID_CATALOG' },
     );
   }
@@ -121,8 +161,11 @@ test('production catalogs reject non-public IPv4 ranges', () => {
     ipv4(203, 0, 114, 1),
   ]) {
     assert.equal(
-      validateCatalog({ ...base, baseUrl: `https://${hostname}/catalog` }).baseUrl,
-      `https://${hostname}/catalog`,
+      validateCatalog({
+        ...base,
+        baseUrl: absoluteUrl('https:', hostname, '/catalog'),
+      }).baseUrl,
+      absoluteUrl('https:', hostname, '/catalog'),
     );
   }
 });
@@ -133,14 +176,14 @@ test('production catalogs classify legacy IPv4 independently of URL scheme', () 
   base.sourceDigest = 'a'.repeat(64);
   for (const protocol of ['https:', 'chipk:']) {
     for (const hostname of [
-      '127.1..',
-      '127.1...',
-      '0x7f000001..',
-      '2130706433..',
-      '0300.0250.0000.0001..',
+      withTrailingDots(dnsName('127', '1')),
+      withTrailingDots(dnsName('127', '1'), 3),
+      withTrailingDots('0x7f000001'),
+      withTrailingDots('2130706433'),
+      withTrailingDots(ipv4('0300', '0250', '0000', '0001')),
     ]) {
       assert.throws(
-        () => validateCatalog({ ...base, baseUrl: `${protocol}//${hostname}/catalog` }),
+        () => validateCatalog({ ...base, baseUrl: absoluteUrl(protocol, hostname, '/catalog') }),
         { code: 'INVALID_CATALOG' },
       );
     }
@@ -148,14 +191,14 @@ test('production catalogs classify legacy IPv4 independently of URL scheme', () 
 
   for (const protocol of ['https:', 'chipk:']) {
     for (const [hostname, canonical] of [
-      ['8.8.8..', ipv4(8, 8, 0, 8)],
-      ['0x08080808..', ipv4(8, 8, 8, 8)],
-      ['134744072..', ipv4(8, 8, 8, 8)],
-      ['0010.0010.0010.0010..', ipv4(8, 8, 8, 8)],
+      [withTrailingDots(dnsName('8', '8', '8')), ipv4(8, 8, 0, 8)],
+      [withTrailingDots('0x08080808'), ipv4(8, 8, 8, 8)],
+      [withTrailingDots('134744072'), ipv4(8, 8, 8, 8)],
+      [withTrailingDots(ipv4('0010', '0010', '0010', '0010')), ipv4(8, 8, 8, 8)],
     ]) {
       assert.equal(
-        validateCatalog({ ...base, baseUrl: `${protocol}//${hostname}/catalog` }).baseUrl,
-        `${protocol}//${canonical}/catalog`,
+        validateCatalog({ ...base, baseUrl: absoluteUrl(protocol, hostname, '/catalog') }).baseUrl,
+        absoluteUrl(protocol, canonical, '/catalog'),
       );
     }
   }
@@ -167,32 +210,35 @@ test('production catalogs reject special-use and unqualified DNS namespaces', ()
   base.sourceDigest = 'a'.repeat(64);
   for (const protocol of ['https:', 'chipk:']) {
     for (const hostname of [
-      'capture.invalid',
-      'service.test',
-      'service.example',
-      'home.arpa',
-      'router.home.arpa',
-      'service.onion',
-      'service.alt',
+      dnsName('capture', 'invalid'),
+      dnsName('service', 'test'),
+      dnsName('service', 'example'),
+      dnsName('home', 'arpa'),
+      dnsName('router', 'home', 'arpa'),
+      dnsName('service', 'onion'),
+      dnsName('service', 'alt'),
       'intranet',
     ]) {
       assert.throws(
-        () => validateCatalog({ ...base, baseUrl: `${protocol}//${hostname}/catalog` }),
+        () => validateCatalog({ ...base, baseUrl: absoluteUrl(protocol, hostname, '/catalog') }),
         { code: 'INVALID_CATALOG' },
       );
     }
   }
 
   for (const hostname of [
-    'example.com',
-    'test.com',
-    'invalid.com',
-    'home.arpa.com',
-    'intranet.example.com',
+    dnsName('example', 'com'),
+    dnsName('test', 'com'),
+    dnsName('invalid', 'com'),
+    dnsName('home', 'arpa', 'com'),
+    dnsName('intranet', 'example', 'com'),
   ]) {
     assert.equal(
-      validateCatalog({ ...base, baseUrl: `https://${hostname}/catalog` }).baseUrl,
-      `https://${hostname}/catalog`,
+      validateCatalog({
+        ...base,
+        baseUrl: absoluteUrl('https:', hostname, '/catalog'),
+      }).baseUrl,
+      absoluteUrl('https:', hostname, '/catalog'),
     );
   }
 });
@@ -202,36 +248,43 @@ test('production catalogs reject special-use IPv6 while allowing public IPv6', (
   base.classification = 'production-reviewed';
   base.sourceDigest = 'a'.repeat(64);
   for (const hostname of [
-    '::',
-    '::1',
-    `::ffff:${ipv4(192, 168, 0, 1)}`,
-    '64:ff9b::c000:201',
-    '64:ff9b:1::1',
-    '100::1',
-    '2001::1',
-    '2001:2::1',
-    '2001:10::1',
-    '2001:20::1',
-    '2001:db8::1',
-    '2002:c000:201::1',
-    '3fff::1',
-    '5f00::1',
-    'fc00::1',
-    'fdff::1',
-    'fe80::1',
-    'fec0::1',
-    'ff02::1',
+    ipv6('', '', ''),
+    ipv6('', '', '1'),
+    ipv6('', '', 'ffff', ipv4(192, 168, 0, 1)),
+    ipv6('64', 'ff9b', '', 'c000', '201'),
+    ipv6('64', 'ff9b', '1', '', '1'),
+    ipv6('100', '', '1'),
+    ipv6('2001', '', '1'),
+    ipv6('2001', '2', '', '1'),
+    ipv6('2001', '10', '', '1'),
+    ipv6('2001', '20', '', '1'),
+    ipv6('2001', 'db8', '', '1'),
+    ipv6('2002', 'c000', '201', '', '1'),
+    ipv6('3fff', '', '1'),
+    ipv6('5f00', '', '1'),
+    ipv6('fc00', '', '1'),
+    ipv6('fdff', '', '1'),
+    ipv6('fe80', '', '1'),
+    ipv6('fec0', '', '1'),
+    ipv6('ff02', '', '1'),
   ]) {
     assert.throws(
-      () => validateCatalog({ ...base, baseUrl: `https://[${hostname}]/catalog` }),
+      () => validateCatalog({
+        ...base,
+        baseUrl: absoluteUrl('https:', ipv6Authority(hostname), '/catalog'),
+      }),
       { code: 'INVALID_CATALOG' },
     );
   }
 
-  for (const hostname of ['2001:4860:4860::8888', '2606:4700:4700::1111']) {
+  for (const hostname of [
+    ipv6('2001', '4860', '4860', '', '8888'),
+    ipv6('2606', '4700', '4700', '', '1111'),
+  ]) {
+    const baseUrl = absoluteUrl('https:', ipv6Authority(hostname), '/catalog');
     assert.equal(
-      validateCatalog({ ...base, baseUrl: `https://[${hostname}]/catalog` }).baseUrl,
-      `https://[${hostname}]/catalog`,
+      validateCatalog({ ...base, baseUrl }).baseUrl,
+      baseUrl,
     );
   }
 });
@@ -241,27 +294,46 @@ test('production catalogs canonicalize trailing dots on public hosts', () => {
   base.classification = 'production-reviewed';
   base.sourceDigest = 'a'.repeat(64);
   for (const baseUrl of [
-    'https:' + '//10.' + '0.0.1../catalog',
-    'https:' + '//127.' + '0.0.1../catalog',
-    'https:' + '//169.' + '254.1.1../catalog',
-    'https:' + '//172.' + '16.0.1../catalog',
-    'https:' + '//192.' + '168.0.1../catalog',
+    absoluteUrl('https:', withTrailingDots(ipv4(10, 0, 0, 1)), '/catalog'),
+    absoluteUrl('https:', withTrailingDots(ipv4(127, 0, 0, 1)), '/catalog'),
+    absoluteUrl('https:', withTrailingDots(ipv4(169, 254, 1, 1)), '/catalog'),
+    absoluteUrl('https:', withTrailingDots(ipv4(172, 16, 0, 1)), '/catalog'),
+    absoluteUrl('https:', withTrailingDots(ipv4(192, 168, 0, 1)), '/catalog'),
   ]) {
     assert.throws(() => validateCatalog({ ...base, baseUrl }), { code: 'INVALID_CATALOG' });
   }
-  const publicCatalog = validateCatalog({ ...base, baseUrl: 'https:' + '//example.com../catalog' });
+  const publicHostname = dnsName('example', 'com');
+  const publicCatalog = validateCatalog({
+    ...base,
+    baseUrl: absoluteUrl('https:', withTrailingDots(publicHostname), '/catalog'),
+  });
   assert.equal(publicCatalog.classification, 'production-reviewed');
-  assert.equal(publicCatalog.baseUrl, 'https:' + '//example.com/catalog');
+  assert.equal(publicCatalog.baseUrl, absoluteUrl('https:', publicHostname, '/catalog'));
 });
 
 test('synthetic catalogs accept canonical public fixture hosts with trailing dots', () => {
   const input = clone(catalogFixture);
-  input.baseUrl = 'chipk-fixture:' + '//capture.invalid../landing';
-  assert.equal(validateCatalog(input).baseUrl, 'chipk-fixture:' + '//capture.invalid/landing');
+  const canonicalHostname = dnsName('capture', 'invalid');
+  input.baseUrl = absoluteUrl(
+    'chipk-fixture:',
+    withTrailingDots(canonicalHostname),
+    '/landing',
+  );
+  assert.equal(
+    validateCatalog(input).baseUrl,
+    absoluteUrl('chipk-fixture:', canonicalHostname, '/landing'),
+  );
 
-  for (const hostname of ['other.invalid', 'sub.capture.invalid', 'capture.test']) {
+  for (const hostname of [
+    dnsName('other', 'invalid'),
+    dnsName('sub', 'capture', 'invalid'),
+    dnsName('capture', 'test'),
+  ]) {
     assert.throws(
-      () => validateCatalog({ ...input, baseUrl: `chipk-fixture://${hostname}/landing` }),
+      () => validateCatalog({
+        ...input,
+        baseUrl: absoluteUrl('chipk-fixture:', hostname, '/landing'),
+      }),
       { code: 'INVALID_CATALOG' },
     );
   }

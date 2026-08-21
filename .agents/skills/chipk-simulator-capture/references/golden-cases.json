@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Small, reviewed semantic-routing cases for the first ChipK capture iteration.",
+  "cases": [
+    {
+      "id": "historical-stock-health-check",
+      "mode": "test",
+      "scriptDate": "2025-01-02",
+      "text": "台積電的股票健檢與綜合評語",
+      "params": {},
+      "expectedTopRoute": "chipk.stock.health-check",
+      "expectedHumanChoice": false,
+      "expectedResolvedParams": {"stockid": "2330", "stockname": "台積電"},
+      "expectedUrlParts": ["page=stock", "subpage=26", "stockid=2330"]
+    },
+    {
+      "id": "stock-main-force",
+      "mode": "test",
+      "text": "看台積電的主力進出",
+      "params": {"stockid": "2330", "stockname": "台積電"},
+      "expectedTopRoute": "chipk.stock.main-force",
+      "expectedHumanChoice": false,
+      "expectedResolvedParams": {"stockid": "2330", "stockname": "台積電"},
+      "expectedUrlParts": ["page=stock", "subpage=5", "stockid=2330"]
+    },
+    {
+      "id": "featured-main-force",
+      "mode": "test",
+      "text": "開啟籌碼K線，進「精選」看主力動向。",
+      "params": {},
+      "expectedTopRoute": "chipk.select.featured-main-force",
+      "expectedHumanChoice": true,
+      "expectedResolvedParams": {},
+      "expectedUrlParts": [
+        "page=select",
+        "subpage=3",
+        "strategyName=%E4%B8%BB%E5%8A%9B%E7%8B%82%E6%94%B6%E5%99%B4%E7%99%BC"
+      ]
+    },
+    {
+      "id": "market-breadth",
+      "mode": "test",
+      "text": "今天大盤的漲跌家數",
+      "params": {},
+      "expectedTopRoute": "chipk.index-content.breadth",
+      "expectedHumanChoice": false,
+      "expectedResolvedParams": {},
+      "expectedUrlParts": ["page=indexContent", "subpage=8"]
+    },
+    {
+      "id": "ambiguous-institutional-scope",
+      "mode": "test",
+      "text": "比較個股法人與大盤法人動向",
+      "params": {"stockid": "2330", "stockname": "台積電"},
+      "expectedCandidates": [
+        "chipk.stock.institutional",
+        "chipk.index-content.institutional"
+      ],
+      "expectedHumanChoice": true
+    },
+    {
+      "id": "no-product-screen-match",
+      "mode": "test",
+      "text": "介紹公司的設計團隊與工作文化",
+      "params": {},
+      "expectedCandidates": [],
+      "expectedHumanChoice": true
+    }
+  ]
+}

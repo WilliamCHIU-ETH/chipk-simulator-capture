@@ -8,5 +8,5 @@
     "stockId": "0000",
     "stockName": "Example Corporation"
   },
-  "outputDirectory": "runtime-output"
+  "outputDirectory": "/private/tmp/chipk-capture-synthetic-output"
 }

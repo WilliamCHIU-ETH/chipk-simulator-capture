@@ -1,4 +1,5 @@
 node_modules/
+.runtime/
 runtime-data/
 coverage/
 .env
@@ -11,7 +12,10 @@ coverage/
 *.jpg
 *.jpeg
 *.webp
+*.gif
+*.pdf
 *.heic
+*.webm
 *.wav
 *.mp3
 *.m4a
@@ -19,4 +23,8 @@ coverage/
 *.db
 *.plist
 *.log
+.xcresult/
+DerivedData/
+.app/
+*.ipa
 .DS_Store

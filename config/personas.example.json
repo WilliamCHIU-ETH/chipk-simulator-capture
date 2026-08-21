@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "personas": [
+    {
+      "id": "example-vip",
+      "approved": false,
+      "accessLevel": "vip",
+      "bundleId": "example.bundle",
+      "keychainService": "replace-locally",
+      "keychainAccount": "replace-locally"
+    }
+  ]
+}

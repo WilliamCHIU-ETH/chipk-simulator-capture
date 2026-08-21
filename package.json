@@ -1,18 +1,21 @@
 {
   "name": "@williamchiu-eth/chipk-simulator-capture",
-  "version": "0.1.0-source-only.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Sanitized source-only ChipK material acquisition provider",
   "engines": {
     "node": ">=22 <25"
   },
   "bin": {
-    "chipk-capture": "bin/chipk-capture.js"
+    "chipk-capture": "bin/chipk-capture.js",
+    "chipk-refresh-catalog": "bin/chipk-refresh-catalog.js"
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
-    "check": "node bin/chipk-capture.js capabilities --json && node bin/chipk-capture.js plan --request fixtures/synthetic/request.json --json",
-    "scan:sanitized": "node test/sanitized-tree-check.js",
-    "preflight": "npm test && npm run check && npm run scan:sanitized"
+    "test": "node --test test/*.test.js scripts/*.test.js",
+    "check": "node bin/chipk-capture.js capabilities --json && node scripts/simulator-capture.js catalog-check --json && node scripts/simulator-record.js recipe-check --json",
+    "refresh:catalog": "node bin/chipk-refresh-catalog.js",
+    "scan:source-only": "node test/sanitized-tree-check.js",
+    "scan:sanitized": "npm run scan:source-only",
+    "preflight": "npm test && npm run check && npm run scan:source-only"
   }
 }
