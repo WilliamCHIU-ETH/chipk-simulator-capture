@@ -141,6 +141,35 @@ route-level evidence boundary.
 Actual direct `capture` or `record` commands mutate Simulator state and require explicit user
 authorization. See `.agents/skills/chipk-simulator-capture/SKILL.md` first.
 
+## Experimental prepared mobile clip v0
+
+The provider-local experiment can turn an already-published raw recording bundle into a
+full-phone H.264 clip whose camera and interaction emphasis are derived from normalized actions:
+
+```bash
+node scripts/prepare-mobile-clip.js profile-check --json
+node scripts/prepare-mobile-clip.js plan \
+  --raw .runtime/example/raw.mp4 \
+  --actions .runtime/example/actions.json \
+  --profile chipk.full-phone-portrait.v0 \
+  --json
+node scripts/prepare-mobile-clip.js render \
+  --raw .runtime/example/raw.mp4 \
+  --actions .runtime/example/actions.json \
+  --recording-manifest .runtime/example/recording-manifest.json \
+  --profile chipk.full-phone-portrait.v0 \
+  --video .runtime/example/prepared.mp4 \
+  --plan .runtime/example/prepared-plan.json \
+  --manifest .runtime/example/preparation-provenance.json \
+  --json
+```
+
+This is not part of the stable `chipk-capture` v1 request/result contract. It does not touch a
+Simulator or network, and it fails closed when current actions lack passed observed timing,
+normalized gesture geometry, an explicit long-press marker, result assertion, or result hold.
+Generated media, plans, and provenance stay under ignored `.runtime/`. See
+`docs/prepared-mobile-clip-v0.md`.
+
 ## Source-only repository
 
 Version code, architecture, rules, schemas, tests, sanitized deterministic fixtures, the reviewed

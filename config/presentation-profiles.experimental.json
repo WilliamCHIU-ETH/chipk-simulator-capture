@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "status": "experimental",
+  "profiles": [
+    {
+      "id": "chipk.full-phone-portrait.v0",
+      "version": 1,
+      "status": "experimental",
+      "output": {
+        "dimensions": "preserve_source",
+        "orientation": "portrait",
+        "codec": "h264",
+        "encoder": "libx264",
+        "pixelFormat": "yuv420p",
+        "fps": "source_or_30",
+        "crf": 18,
+        "preset": "medium"
+      },
+      "camera": {
+        "easing": "cosine",
+        "leadMs": 480,
+        "maxZoom": 1.8,
+        "zoomByKind": {
+          "tap": 1.58,
+          "long_press": 1.48,
+          "swipe": 1.38,
+          "result_hold": 1.32
+        }
+      },
+      "emphasis": {
+        "tapPulseMs": 480,
+        "longPressMinimumMs": 1200,
+        "resultHoldMinimumMs": 900,
+        "swipeTrailSamples": 8,
+        "swipeTrailHoldMs": 180,
+        "markerSizeRatio": 0.018,
+        "color": "0xffb020"
+      },
+      "requirements": {
+        "observedComplete": true,
+        "requiredInteractionKinds": [
+          "tap",
+          "swipe",
+          "result_hold"
+        ],
+        "requiredEvidenceTypes": [
+          "assert"
+        ],
+        "maxDurationMs": 30000,
+        "timelineToleranceMs": 250
+      }
+    }
+  ]
+}
