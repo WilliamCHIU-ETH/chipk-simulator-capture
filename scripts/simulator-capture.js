@@ -891,6 +891,7 @@ async function captureRoute(catalog, input, deps = {}) {
       ocrCallCount += 1;
       let resolvedBy = 'default';
       let lines = ocr(tempScreenshot, 'chi_tra');
+      let sparseLines = [];
       let match = matchedExpectedTexts(lines, plan.expectedTexts);
       if (match.missing.length > 0) {
         ocrModesTried.add('psm6');
@@ -903,12 +904,23 @@ async function captureRoute(catalog, input, deps = {}) {
         ocrModesTried.add('psm11');
         ocrCallCount += 1;
         resolvedBy = 'psm11_spatial';
-        const sparseLines = ocr(tempScreenshot, 'chi_tra', { psm: 11 });
+        sparseLines = ocr(tempScreenshot, 'chi_tra', { psm: 11 });
         const sparseMatch = matchedSparseExpectedTexts(sparseLines, match.missing);
         match = mergeExpectedTextMatches(plan.expectedTexts, match, sparseMatch);
       }
       if (match.missing.length === 0) {
-        const contentMatch = matchedExpectedTexts(lines, plan.contentTexts);
+        let contentMatch = matchedExpectedTexts(lines, plan.contentTexts);
+        if (contentMatch.missing.length > 0 && sparseLines.length > 0) {
+          const sparseContentMatch = matchedSparseExpectedTexts(
+            sparseLines,
+            contentMatch.missing,
+          );
+          contentMatch = mergeExpectedTextMatches(
+            plan.contentTexts,
+            contentMatch,
+            sparseContentMatch,
+          );
+        }
         result = { match, contentMatch, elapsedMs: clock() - started, resolvedBy };
         break;
       }

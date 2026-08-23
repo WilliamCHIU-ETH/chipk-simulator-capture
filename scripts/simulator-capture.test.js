@@ -652,7 +652,7 @@ test('capture 在 default OCR 已命中時不執行任何 fallback', async (t) =
   });
 });
 
-test('capture 只在 default 與 PSM6 都 miss 時使用 PSM11 spatial fallback', async (t) => {
+test('capture 單次 PSM11 驗 wrapped readiness/content 且拒絕 adjacent-column content', async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-sparse-ocr-test-'));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
   const udid = '11111111-1111-1111-1111-111111111111';
@@ -661,6 +661,7 @@ test('capture 只在 default 與 PSM6 都 miss 時使用 PSM11 spatial fallback'
   const positive = ocrGeometryFixture.cases.find(
     (fixture) => fixture.id === 'wrapped-target-with-adjacent-column',
   );
+  catalog.routes[0].contentTexts = positive.contentTexts;
 
   const result = await captureRoute(
     catalog,
@@ -688,6 +689,13 @@ test('capture 只在 default 與 PSM6 都 miss 時使用 PSM11 spatial fallback'
     { lang: 'chi_tra', options: { psm: 11 } },
   ]);
   assert.deepEqual(result.verification.matchedTexts, ['精選', '主力狂收噴發']);
+  assert.deepEqual(result.verification.contentTexts, {
+    expected: positive.contentTexts,
+    observed: positive.expectedContentMatched,
+    missing: positive.contentTexts.filter(
+      (text) => !positive.expectedContentMatched.includes(text),
+    ),
+  });
   assert.deepEqual(result.verification.ocrReadiness, {
     modesTried: ['default', 'psm6', 'psm11'],
     sparseFallbackAttempted: true,
