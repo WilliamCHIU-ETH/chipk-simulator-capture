@@ -2366,6 +2366,13 @@ async function recordRecipe(catalog, recipeFile, input, deps = {}) {
     stockId: recipe.stock.id,
     stockName: recipe.stock.name,
   });
+  if (input.currentTarget === true && routePlan.route.requiresRootNavigation === true) {
+    throw new RecordingError(
+      `route ${routePlan.route.id} 必須執行 root navigation，不能使用 --current-target`,
+      'root_navigation_required',
+      { routeId: routePlan.route.id },
+    );
+  }
   const pipelineTimings = createPipelineTimingTracker(deps.stageClock || Date.now);
   const runner = deps.runner || createMaestroRunner(deps.maestroOptions);
   const runnerInfo = await pipelineTimings.run('runner_prepare', async () =>

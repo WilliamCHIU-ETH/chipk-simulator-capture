@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "catalogVersion": "chipk-ios-reviewed-2026-08-20+stocks-2150334a",
+  "catalogVersion": "chipk-ios-reviewed-2026-08-23-root-navigation+stocks-2150334a",
   "product": {
     "id": "chipk",
     "name": "籌碼K線",
@@ -1106,6 +1106,7 @@
       "fixedParams": {
         "strategyName": "主力狂收噴發"
       },
+      "requiresRootNavigation": true,
       "requiredParams": [],
       "optionalParams": [],
       "expectedTexts": [

@@ -405,6 +405,19 @@ test('plan 是 side-effect-free Test Mode 契約且保留 evidence boundary', ()
   assert.equal(plan.planned.every((event) => event.timing === 'planned_only'), true);
 });
 
+test('recording plan 沿用 route 的 root-normalized URL', () => {
+  const { catalog, recipeFile, recipe } = setup();
+  const route = catalog.routes.find((item) => item.id === recipe.routeId);
+  route.requiresRootNavigation = true;
+
+  const plan = planRecipe(catalog, recipeFile, recipe.id);
+
+  assert.equal(plan.route.requiresRootNavigation, true);
+  assert.equal(plan.navigation.parameters.noReloadApp, undefined);
+  assert.doesNotMatch(plan.navigation.url, /[?&]noReloadApp=/);
+  assert.equal(plan.planned[0].url, plan.navigation.url);
+});
+
 test('benchmark plan 規劃 pre-record readiness、單一 tap 與 result assert', () => {
   const { catalog, recipeFile } = setup();
   const plan = planRecipe(catalog, recipeFile, 'renbao.kline-tab-switch-benchmark');
@@ -1798,6 +1811,56 @@ test('登入失效或 target/default 技術 context preflight 失敗時，不啟
     assert.equal(fs.existsSync(path.join(dir, name)), false);
   }
   assert.equal(fs.readdirSync(dir).some((name) => name.startsWith('.chipk-simulator-record-')), false);
+});
+
+test('requiresRootNavigation route 拒絕 --current-target，且在 opener、runner、preflight 前 fail closed', async (t) => {
+  const { catalog, recipeFile } = setup();
+  const rootNavigationCatalog = clone(catalog);
+  const route = rootNavigationCatalog.routes.find((item) => item.id === 'chipk.stock.kline');
+  route.requiresRootNavigation = true;
+  const dir = tempDir(t, 'simulator-record-root-navigation-gate-');
+  const calls = { opener: 0, prepare: 0, preflight: 0 };
+
+  await assert.rejects(
+    () =>
+      recordRecipe(
+        rootNavigationCatalog,
+        recipeFile,
+        {
+          recipe: 'renbao.kline-main-force-swipe',
+          runnerName: 'maestro',
+          udid: UDID,
+          confirmVipSession: true,
+          currentTarget: true,
+          video: path.join(dir, 'raw.mp4'),
+          actions: path.join(dir, 'actions.json'),
+          manifest: path.join(dir, 'manifest.json'),
+        },
+        {
+          routeOpener() {
+            calls.opener += 1;
+          },
+          preflight() {
+            calls.preflight += 1;
+          },
+          runner: {
+            async prepare() {
+              calls.prepare += 1;
+            },
+          },
+        },
+      ),
+    (error) =>
+      error instanceof RecordingError &&
+      error.code === 'root_navigation_required' &&
+      error.details?.routeId === 'chipk.stock.kline',
+  );
+
+  assert.deepEqual(calls, { opener: 0, prepare: 0, preflight: 0 });
+  for (const name of ['raw.mp4', 'actions.json', 'manifest.json']) {
+    assert.equal(fs.existsSync(path.join(dir, name)), false);
+  }
+  assert.equal(fs.readdirSync(dir).length, 0);
 });
 
 test('default Maestro target preflight 對 login/缺少 技術 assertion 的 nonzero flow fail closed', async (t) => {

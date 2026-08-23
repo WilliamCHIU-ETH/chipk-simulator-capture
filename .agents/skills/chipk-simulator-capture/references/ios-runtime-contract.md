@@ -36,4 +36,12 @@ chipk://www.cmoney.tw/app/landing_page/chipk?page=stock&subpage=26&stockid=2330&
 
 The app rewrites this to the HTTPS form before normal routing. This tests in-app routing but does not prove the production Universal Link, signing entitlement, or AASA file.
 
+`noReloadApp=1` tells the reviewed iOS handler to reuse the current navigation stack. That is not
+safe for routes such as `select` that only replace content inside MainVC: a pushed stock-detail
+controller can remain visible above the selected content. Operational catalog routes marked
+`requiresRootNavigation: true` therefore omit `noReloadApp`; the App rebuilds MainVC, preserves the
+pending route parameters, and handles them when the new MainVC appears. This is a provider-owned
+navigation policy shared by screenshot and recording plans, not a caller flag or a Marketing Video
+responsibility.
+
 Deep Links dispatch only after login. If the approved VIP session is absent, use the bounded approved-persona flow in `session-and-login.md` only when the user authorized login/capture in that turn. Do not embed plaintext credentials, patch user defaults, invoke private selectors, or bypass authentication; stop at the human gate on any unexpected login state.

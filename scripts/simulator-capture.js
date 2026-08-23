@@ -146,6 +146,12 @@ function validateCatalog(catalog) {
       if (route.contentTexts !== undefined) {
         expectStringArray(route.contentTexts, `${label}.contentTexts`);
       }
+      if (
+        route.requiresRootNavigation !== undefined &&
+        typeof route.requiresRootNavigation !== 'boolean'
+      ) {
+        errors.push(`${label}.requiresRootNavigation 必須是 boolean`);
+      }
       if (typeof route.captureAllowed !== 'boolean') errors.push(`${label}.captureAllowed 必須是 boolean`);
       expectString(route.sideEffectRisk, `${label}.sideEffectRisk`);
 
@@ -177,6 +183,12 @@ function validateCatalog(catalog) {
         if (name === 'page' || name === 'subpage') {
           errors.push(`${label}.fixedParams 不得覆寫 reserved 參數：${name}`);
         }
+      }
+      if (
+        route.requiresRootNavigation === true &&
+        (seenParams.has('noReloadApp') || Object.hasOwn(route.fixedParams || {}, 'noReloadApp'))
+      ) {
+        errors.push(`${label}.requiresRootNavigation 不得同時宣告 noReloadApp`);
       }
     });
   }
@@ -505,6 +517,7 @@ function buildPlan(catalog, input, now = new Date()) {
       'side_effect_risk',
     );
   }
+  const requiresRootNavigation = route.requiresRootNavigation === true;
   const providedParams = inputProvidedParams(input);
   let stockResolution = null;
   if (route.page === 'stock') {
@@ -532,6 +545,7 @@ function buildPlan(catalog, input, now = new Date()) {
     if (params[key] !== undefined) url.searchParams.set(key, params[key]);
   }
   for (const [key, value] of Object.entries(catalog.product.defaultQuery || {})) {
+    if (requiresRootNavigation && key === 'noReloadApp') continue;
     url.searchParams.set(key, value);
   }
   for (const [key, value] of Object.entries(route.fixedParams || {})) {
@@ -575,6 +589,7 @@ function buildPlan(catalog, input, now = new Date()) {
       page: route.page,
       subpage: String(route.subpage),
       sideEffectRisk: route.sideEffectRisk,
+      requiresRootNavigation,
     },
     url: url.toString(),
     parameters: Object.fromEntries(url.searchParams.entries()),
