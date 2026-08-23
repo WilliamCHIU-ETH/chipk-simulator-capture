@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "targetVersion": "0.2.1",
+  "releasedBaseline": "0.2.0",
+  "completionPolicy": "all_required_checks_complete_before_release_review",
+  "gates": [
+    {
+      "id": "source-coverage-truth",
+      "kind": "automatic",
+      "completionCondition": "Source report separates catalog, navigation readiness text candidates, content candidates, recipe coverage, and unclaimed runtime verification."
+    },
+    {
+      "id": "target-version-identity",
+      "kind": "automatic",
+      "completionCondition": "package.json and package-lock.json identify 0.2.1 before release review."
+    },
+    {
+      "id": "release-commit-clean",
+      "kind": "automatic",
+      "completionCondition": "The provider worktree is clean and has one exact commit identity."
+    },
+    {
+      "id": "provider-preflight",
+      "kind": "attestation",
+      "attestationKey": "providerPreflight",
+      "completionCondition": "The attestation envelope contains a reviewable claim that npm run preflight passed against the exact provider commit."
+    },
+    {
+      "id": "p0-root-navigation-regression",
+      "kind": "attestation",
+      "attestationKey": "p0RootNavigationRegression",
+      "completionCondition": "The attestation envelope contains a reviewable claim that the P0 root-navigation regression passed against the exact provider commit."
+    },
+    {
+      "id": "cross-repo-convergence",
+      "kind": "cross_repository_attestation",
+      "attestationKey": "crossRepoConvergence",
+      "completionCondition": "The attestation envelope contains reviewable claims for Marketing Video v1 compatibility and provider-free regression on exact provider and consumer commits."
+    }
+  ],
+  "versionBoundary": {
+    "baselineIncludesTargetScope": false,
+    "rule": "The v0.2.1 gates do not retroactively change claims made by the released v0.2.0 baseline."
+  }
+}
