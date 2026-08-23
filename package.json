@@ -1,6 +1,6 @@
 {
   "name": "@williamchiu-eth/chipk-simulator-capture",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Sanitized source-only ChipK material acquisition provider",
   "engines": {
