@@ -4,11 +4,16 @@ Use this contract only for an explicitly authorized interaction recording. Stati
 
 ## Acquisition boundary
 
-`scripts/simulator-record.js` owns deterministic acquisition only:
+Under Contract v1, `scripts/simulator-record.js` owns deterministic acquisition:
 
 `versioned recipe → exact Simulator → Maestro interaction → raw.mp4 + actions.json + recording-manifest.json`
 
-It does not add zoom, pan, touch ripples, a device frame, music, captions, or final editing. Those presentation effects consume the normalized `touchPoint`, `touchPath`, `zoomFocus`, and observed timing fields from `actions.json` in a later tool such as HyperFrames.
+It does not yet render zoom, pan, touch emphasis, or a prepared phone frame. The normalized
+`touchPoint`, `touchPath`, `zoomFocus`, and observed timing fields in `actions.json` are
+provider-owned preparation semantics for a future versioned presentation stage. They must not be
+treated as a requirement for Marketing Video to reimplement ChipK-specific UI decisions. Music,
+captions, narrative editing, scene-level composition, final render, and delivery remain Marketing
+Video responsibilities. See `docs/product-core.md` for the accepted responsibility and v2 gate.
 
 The first recipe is `renbao.kline-main-force-swipe`. It uses the catalog route `chipk.stock.kline` for `仁寶 (2324)` in Test Mode. Before recording, acquisition opens the exact catalog-resolved custom-scheme URL with `xcrun simctl openurl <exact-udid> <url>`. A separate Maestro preparation flow may conditionally tap the known iOS `打開` confirmation when it is visible, then verifies `K線`, `2324`, `仁寶`, the default `技術` group, and the absence of `使用 CMoney 帳號登入`. The Maestro preparation YAML must not contain `openLink`; this prevents Safari or stale-browser state from being mistaken for target navigation. Only after the local navigation process evidence and UI evidence pass does acquisition record the lower `主力` group tap, one native chart long press, one horizontal chart swipe, the strict result state, and presentation holds. The encoded raw clip must be 10–15 seconds.
 

@@ -5,11 +5,16 @@ description: "Turn Traditional Chinese marketing copy into audited ChipK iOS Sim
 
 # ChipK Simulator Capture
 
-Create reproducible phone-screen material through this chain:
+Create reproducible phone-screen material through the current v1 chain:
 
 `copy → ranked route IDs → explicit plan → exact Simulator → route/content checks → PNG or raw interaction recording + evidence manifests`
 
-This skill owns screen acquisition. It does not own final zoom, pan, device framing, B-roll editing, or video assembly.
+This skill owns screen acquisition and ChipK-specific phone-presentation semantics. The accepted
+Product Core in `docs/product-core.md` assigns future prepared mobile output to this provider, while
+Marketing Video owns Project/Revision/Timeline, narrative, scene-level composition, final render,
+and delivery. Current Contract v1 does not publish prepared video: do not claim that zoom, pan,
+gesture emphasis, or phone framing has been rendered until an active versioned contract advertises
+and verifies that capability.
 
 ## Start here
 

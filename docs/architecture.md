@@ -16,9 +16,11 @@ closed validator ──► operational catalog / recipe ──► runtime adapte
 ```
 
 The provider owns the catalog, deterministic planning, exact-device preflight, screenshot/record
-execution, evidence manifests, hashes, media metadata, and atomic publication. Marketing Video
-owns whether to prefer/require/disable the provider, fallback, Project asset import, framing,
-editing, rendering, and delivery QA.
+execution, ChipK-specific phone-presentation semantics, evidence manifests, hashes, media metadata,
+and atomic publication. Marketing Video owns whether to prefer/require/disable the provider,
+fallback, Project asset import, Revision/Timeline decisions, narrative and scene-level composition,
+final rendering, and delivery QA. `docs/product-core.md` defines this responsibility and separates
+the accepted ready-to-place direction from the current raw-only v1 capability.
 
 ## Stable boundary
 
@@ -37,5 +39,7 @@ material intent rather than provider implementation details.
 - Completed acquisition: full result on stdout, exit 0.
 - No operation overwrites an artifact or publishes a partial final bundle.
 
-`completed` means acquisition completed. Material evidence may still state
-`captured_pending_human_review`; final editorial suitability remains outside this provider.
+Under Contract v1, `completed` means acquisition completed. Material evidence may still state
+`captured_pending_human_review`; it does not mean a prepared clip exists. A future prepared-output
+contract must define its own presentation-readiness evidence, while final scene and delivery
+approval remain Marketing Video responsibilities.
