@@ -13,8 +13,14 @@ Marketing Video MaterialAcquisitionPort
 ```
 
 The dependency is one-way: Marketing Video invokes the CLI and never imports provider internals;
-this repository never imports Marketing Video. Marketing Video remains responsible for fallback,
-asset ingestion, visual presentation, editing, and final delivery.
+this repository never imports Marketing Video. Capture owns ChipK-specific acquisition, evidence,
+and phone-material preparation. Marketing Video owns fallback, Project/Revision/Asset/Timeline,
+scene-level composition, final rendering, and delivery.
+
+The accepted product direction is a verified, ready-to-place mobile bundle with raw media, actions,
+and provenance. The current closed v1 contract still publishes screenshots or raw recordings only;
+it does not yet advertise prepared-video output. See `docs/product-core.md` for the responsibility
+decision and the compatibility gate for a future contract.
 
 ## Clean-clone validation
 
@@ -136,4 +142,4 @@ Local files may live inside `.runtime/`, which is ignored. For optional persona 
 the local copy. Unknown generated types also start in `.runtime/` until clean-clone need and
 sanitization are both established.
 
-See `docs/architecture.md`, `docs/production-readiness.md`, and `AGENTS.md`.
+See `docs/product-core.md`, `docs/architecture.md`, `docs/production-readiness.md`, and `AGENTS.md`.

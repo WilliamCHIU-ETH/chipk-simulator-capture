@@ -1,9 +1,15 @@
 # ChipK Simulator Capture Agent Guide
 
 This repository is the optional, standalone material provider for Marketing Video. It owns
-ChipK route selection, Simulator acquisition, recording recipes, runtime verification, and the
-versioned CLI/JSON boundary. It does not own Marketing Video fallback policy, asset import,
-framing, editing, rendering, or delivery.
+ChipK route selection, Simulator acquisition, recording recipes, runtime verification,
+ChipK-specific phone-presentation semantics, and the versioned CLI/JSON boundary. Its accepted
+Product Core is defined in `docs/product-core.md`.
+
+Marketing Video owns fallback policy, Project/Revision/Asset/Timeline, narrative and scene-level
+composition, final rendering, and delivery. Capture owns the phone-local focus, gesture, crop,
+zoom/pan intent, and safe framing needed for future ready-to-place mobile material. Current Request
+and Result v1 still publish only screenshots or raw recordings with evidence; never claim a
+prepared-video artifact until an active versioned contract advertises and verifies that capability.
 
 Marketing Video may execute this provider as a subprocess. The provider must never import or
 reach back into Marketing Video source.
