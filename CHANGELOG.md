@@ -5,8 +5,8 @@
 P0 navigation reliability and evidence-boundary release for the standalone provider.
 
 - Keep the stable Contract v1 process boundary unchanged: `capabilities` and `acquire` publish
-  verified screenshots or raw recordings with actions and evidence. They do not advertise or
-  return prepared-video artifacts.
+  screenshots or raw recordings with their evidence states and actions. They do not advertise or
+  return prepared-video artifacts, and a completed capture does not imply editorial approval.
 - Mark the Featured main-force route as requiring root navigation, omit the inherited
   `noReloadApp` query for that route, and carry the decision into plans and recording provenance.
   Release still requires an exact-commit P0 root-navigation regression attestation.
