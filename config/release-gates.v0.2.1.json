@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "targetVersion": "0.2.1",
+  "releasedBaseline": "0.2.0",
+  "activationPolicy": "all_required_gates_must_pass",
+  "gates": [
+    {
+      "id": "source-coverage-truth",
+      "kind": "automatic",
+      "passCondition": "Source report separates catalog, navigation readiness text candidates, content candidates, recipe coverage, and unclaimed runtime verification."
+    },
+    {
+      "id": "target-version-identity",
+      "kind": "automatic",
+      "passCondition": "package.json and package-lock.json identify 0.2.1 before the release commit is approved."
+    },
+    {
+      "id": "release-commit-clean",
+      "kind": "automatic",
+      "passCondition": "The provider worktree is clean and has one exact commit identity."
+    },
+    {
+      "id": "provider-preflight",
+      "kind": "evidence",
+      "evidenceKey": "providerPreflight",
+      "passCondition": "npm run preflight passed against the exact provider commit."
+    },
+    {
+      "id": "p0-root-navigation-regression",
+      "kind": "evidence",
+      "evidenceKey": "p0RootNavigationRegression",
+      "passCondition": "The reviewed P0 root-navigation regression passed against the exact provider commit."
+    },
+    {
+      "id": "cross-repo-convergence",
+      "kind": "cross_repository_evidence",
+      "evidenceKey": "crossRepoConvergence",
+      "passCondition": "Marketing Video v1 compatibility and provider-free regression passed on the exact provider and consumer commits."
+    }
+  ],
+  "versionBoundary": {
+    "baselineIncludesTargetScope": false,
+    "rule": "The v0.2.1 gates do not retroactively change claims made by the released v0.2.0 baseline."
+  }
+}

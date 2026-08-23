@@ -14,6 +14,8 @@
     "test": "node --test test/*.test.js scripts/*.test.js",
     "test:conformance": "node --test test/conformance-cli.test.js",
     "check": "node bin/chipk-capture.js capabilities --json && node scripts/simulator-capture.js catalog-check --json && node scripts/simulator-record.js recipe-check --json",
+    "coverage:source": "node scripts/simulator-coverage.js report --json",
+    "release:gate:v0.2.1": "node scripts/release-gate.js check --target 0.2.1 --json",
     "refresh:catalog": "node bin/chipk-refresh-catalog.js",
     "scan:source-only": "node test/sanitized-tree-check.js",
     "scan:sanitized": "npm run scan:source-only",
