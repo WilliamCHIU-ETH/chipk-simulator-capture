@@ -14,6 +14,7 @@ const {
   getSourceVersion,
   matchedExpectedTexts,
   parseArgs,
+  readCatalog,
   resolveStock,
   suggestRoutes,
   validateCatalog,
@@ -124,6 +125,24 @@ test('catalog 驗證 fixedParams 非空、安全且不與 user params 重複', (
   assert.throws(() => validateCatalog(duplicate), /不得與 requiredParams\/optionalParams 重複/);
 });
 
+test('catalog 對 root navigation policy fail closed，且禁止 noReloadApp 衝突', () => {
+  const valid = fixtureCatalog();
+  valid.routes[0].requiresRootNavigation = true;
+  assert.equal(validateCatalog(valid).ok, true);
+
+  const invalidType = fixtureCatalog();
+  invalidType.routes[0].requiresRootNavigation = 'yes';
+  assert.throws(() => validateCatalog(invalidType), /requiresRootNavigation 必須是 boolean/);
+
+  const conflictingFixedParam = fixtureCatalog();
+  conflictingFixedParam.routes[0].requiresRootNavigation = true;
+  conflictingFixedParam.routes[0].fixedParams = { noReloadApp: '1' };
+  assert.throws(
+    () => validateCatalog(conflictingFixedParam),
+    /requiresRootNavigation 不得同時宣告 noReloadApp/,
+  );
+});
+
 test('source version 與 catalog version 分開記錄', () => {
   const catalog = fixtureCatalog();
   delete catalog.source;
@@ -165,6 +184,43 @@ test('noReloadApp 只能由 catalog defaultQuery 加入，CLI flag 不公開', (
   });
   assert.equal(plan.parameters.noReloadApp, '1');
   assert.match(plan.url, /[?&]noReloadApp=1(?:&|$)/);
+});
+
+test('requiresRootNavigation 只移除 noReloadApp，並保留其他 catalog defaults', () => {
+  const catalog = fixtureCatalog();
+  catalog.product.defaultQuery.source = 'capture-test';
+  catalog.routes[0].requiresRootNavigation = true;
+  const plan = buildPlan(catalog, {
+    route: 'stock-health-check',
+    mode: 'test',
+    stockId: '2330',
+  });
+
+  assert.equal(plan.route.requiresRootNavigation, true);
+  assert.equal(plan.parameters.noReloadApp, undefined);
+  assert.equal(plan.parameters.source, 'capture-test');
+  assert.doesNotMatch(plan.url, /[?&]noReloadApp=/);
+  assert.match(plan.url, /[?&]source=capture-test(?:&|$)/);
+});
+
+test('正式 Featured route 要求 root navigation，其他 route 保留 current stack', () => {
+  const catalog = readCatalog();
+  const featured = buildPlan(catalog, {
+    route: 'chipk.select.featured-main-force',
+    mode: 'test',
+  });
+  const stock = buildPlan(catalog, {
+    route: 'chipk.stock.main-force',
+    mode: 'test',
+    stockId: '2330',
+    stockName: '台積電',
+  });
+
+  assert.equal(featured.route.requiresRootNavigation, true);
+  assert.equal(featured.parameters.noReloadApp, undefined);
+  assert.doesNotMatch(featured.url, /[?&]noReloadApp=/);
+  assert.equal(stock.route.requiresRootNavigation, false);
+  assert.equal(stock.parameters.noReloadApp, '1');
 });
 
 test('resolveStock 只以正式名稱或完整 ID deterministic 解析台積電', () => {
@@ -508,6 +564,8 @@ test('capture 只在 OCR 通過後寫入 PNG 與不含 token 的 manifest', asyn
   const openedUrls = [];
   const fakePng = Buffer.from('fake-png-for-unit-test');
   const ocrCalls = [];
+  const catalog = fixtureCatalog();
+  catalog.routes[0].requiresRootNavigation = true;
   let tick = 0;
   const exec = (file, args) => {
     if (file === 'xcrun' && args[1] === 'list') {
@@ -532,7 +590,7 @@ test('capture 只在 OCR 通過後寫入 PNG 與不含 token 的 manifest', asyn
   };
 
   const result = await captureRoute(
-    fixtureCatalog(),
+    catalog,
     {
       route: 'stock-health-check',
       mode: 'test',
@@ -563,9 +621,11 @@ test('capture 只在 OCR 通過後寫入 PNG 與不含 token 的 manifest', asyn
     { lang: 'chi_tra', options: { psm: 6 } },
   ]);
   assert.equal(openedUrls.length, 1);
+  assert.doesNotMatch(openedUrls[0], /[?&]noReloadApp=/);
   assert.equal(fs.readFileSync(output).equals(fakePng), true);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   assert.equal(manifest.route.id, 'stock-health-check');
+  assert.equal(manifest.route.requiresRootNavigation, true);
   assert.equal(manifest.resolvedUrl, openedUrls[0]);
   assert.equal(manifest.parameters.stockid, '2330');
   assert.deepEqual(manifest.bundle, { id: 'CMoney.Chipk', version: '10.0.0', build: '100' });
