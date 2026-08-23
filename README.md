@@ -60,11 +60,12 @@ not added to that application's package dependencies.
 
 Before creating a release tag, run provider preflight, the cross-repository compatibility test,
 and Marketing Video's provider-free regression against the final commits. Record the exact tag and
-commit in the consumer compatibility lock only after all three pass. The proposed `v0.2.1` also has
-an explicit all-or-blocked gate for P0 root-navigation regression, source coverage truth, release
-identity, and final-commit convergence; see `docs/release-v0.2.1-checklist.md`. Follow-up OCR,
-prepared-clip, and Accessibility/latency evidence are not `v0.2.1` activation gates. These gates do
-not change the published scope of `v0.2.0`.
+commit in the consumer compatibility lock only after all three pass. The proposed `v0.2.1` has an
+exact-commit checklist for P0 root-navigation regression, source coverage truth, release identity,
+and final-commit convergence; see `docs/release-v0.2.1-checklist.md`. The tool checks attestation
+completeness but does not authenticate references, execute the claimed commands, or authorize a
+tag/release. Follow-up OCR, prepared-clip, and Accessibility/latency evidence are not `v0.2.1`
+checklist requirements. This does not change the published scope of `v0.2.0`.
 
 ## Cross-repository conformance
 

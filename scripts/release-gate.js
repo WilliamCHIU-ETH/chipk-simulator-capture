@@ -19,16 +19,16 @@ const EXPECTED_GATES = Object.freeze([
   { id: 'source-coverage-truth', kind: 'automatic' },
   { id: 'target-version-identity', kind: 'automatic' },
   { id: 'release-commit-clean', kind: 'automatic' },
-  { id: 'provider-preflight', kind: 'evidence', evidenceKey: 'providerPreflight' },
+  { id: 'provider-preflight', kind: 'attestation', attestationKey: 'providerPreflight' },
   {
     id: 'p0-root-navigation-regression',
-    kind: 'evidence',
-    evidenceKey: 'p0RootNavigationRegression',
+    kind: 'attestation',
+    attestationKey: 'p0RootNavigationRegression',
   },
   {
     id: 'cross-repo-convergence',
-    kind: 'cross_repository_evidence',
-    evidenceKey: 'crossRepoConvergence',
+    kind: 'cross_repository_attestation',
+    attestationKey: 'crossRepoConvergence',
   },
 ]);
 
@@ -85,7 +85,7 @@ function validateDefinition(definition) {
       'schemaVersion',
       'targetVersion',
       'releasedBaseline',
-      'activationPolicy',
+      'completionPolicy',
       'gates',
       'versionBoundary',
     ]),
@@ -94,22 +94,26 @@ function validateDefinition(definition) {
   if (definition.schemaVersion !== 1) throw new ReleaseGateError('definition schemaVersion must be 1');
   requireString(definition.targetVersion, 'definition.targetVersion');
   requireString(definition.releasedBaseline, 'definition.releasedBaseline');
-  if (definition.activationPolicy !== 'all_required_gates_must_pass') {
-    throw new ReleaseGateError('definition.activationPolicy is unsupported');
+  if (definition.completionPolicy !== 'all_required_checks_complete_before_release_review') {
+    throw new ReleaseGateError('definition.completionPolicy is unsupported');
   }
   if (!Array.isArray(definition.gates) || definition.gates.length !== EXPECTED_GATES.length) {
     throw new ReleaseGateError('definition.gates must contain the complete required gate set');
   }
   definition.gates.forEach((gate, index) => {
     const expected = EXPECTED_GATES[index];
-    requireKeys(gate, new Set(['id', 'kind', 'evidenceKey', 'passCondition']), `definition.gates[${index}]`);
+    requireKeys(
+      gate,
+      new Set(['id', 'kind', 'attestationKey', 'completionCondition']),
+      `definition.gates[${index}]`,
+    );
     if (gate.id !== expected.id || gate.kind !== expected.kind) {
       throw new ReleaseGateError(`definition gate order or identity changed at ${index}`);
     }
-    if ((gate.evidenceKey || undefined) !== expected.evidenceKey) {
-      throw new ReleaseGateError(`definition gate evidence key changed for ${gate.id}`);
+    if ((gate.attestationKey || undefined) !== expected.attestationKey) {
+      throw new ReleaseGateError(`definition gate attestation key changed for ${gate.id}`);
     }
-    requireString(gate.passCondition, `definition gate ${gate.id}.passCondition`);
+    requireString(gate.completionCondition, `definition gate ${gate.id}.completionCondition`);
   });
   requireKeys(
     definition.versionBoundary,
@@ -127,16 +131,21 @@ function validateEvidenceItem(value, label, { crossRepository = false } = {}) {
   requireKeys(
     value,
     new Set([
-      'status',
+      'claimedStatus',
       'evidenceRef',
       ...(crossRepository
-        ? ['consumerCommit', 'contractVersion', 'compatibilityTest', 'providerFreeRegression']
+        ? [
+          'consumerCommit',
+          'contractVersion',
+          'compatibilityTestClaim',
+          'providerFreeRegressionClaim',
+        ]
         : []),
     ]),
     label,
   );
-  if (!['passed', 'failed', 'pending'].includes(value.status)) {
-    throw new ReleaseGateError(`${label}.status is unsupported`, 'release_evidence_invalid');
+  if (!['passed', 'failed', 'pending'].includes(value.claimedStatus)) {
+    throw new ReleaseGateError(`${label}.claimedStatus is unsupported`, 'release_evidence_invalid');
   }
   requireString(value.evidenceRef, `${label}.evidenceRef`);
   if (crossRepository) {
@@ -146,7 +155,7 @@ function validateEvidenceItem(value, label, { crossRepository = false } = {}) {
     if (!COMMIT_RE.test(String(value.consumerCommit || ''))) {
       throw new ReleaseGateError(`${label}.consumerCommit is invalid`, 'release_evidence_invalid');
     }
-    for (const field of ['compatibilityTest', 'providerFreeRegression']) {
+    for (const field of ['compatibilityTestClaim', 'providerFreeRegressionClaim']) {
       if (!['passed', 'failed', 'pending'].includes(value[field])) {
         throw new ReleaseGateError(`${label}.${field} is unsupported`, 'release_evidence_invalid');
       }
@@ -158,26 +167,32 @@ function validateEvidenceItem(value, label, { crossRepository = false } = {}) {
 function validateEvidence(evidence) {
   requireKeys(
     evidence,
-    new Set(['schemaVersion', 'targetVersion', 'providerCommit', 'gates']),
-    'release evidence',
+    new Set(['schemaVersion', 'targetVersion', 'providerCommit', 'attestations']),
+    'release attestation envelope',
   );
   if (evidence.schemaVersion !== 1) {
-    throw new ReleaseGateError('release evidence schemaVersion must be 1', 'release_evidence_invalid');
+    throw new ReleaseGateError(
+      'release attestation envelope schemaVersion must be 1',
+      'release_evidence_invalid',
+    );
   }
-  requireString(evidence.targetVersion, 'release evidence.targetVersion');
+  requireString(evidence.targetVersion, 'release attestation envelope.targetVersion');
   if (!COMMIT_RE.test(String(evidence.providerCommit || ''))) {
-    throw new ReleaseGateError('release evidence.providerCommit is invalid', 'release_evidence_invalid');
+    throw new ReleaseGateError(
+      'release attestation envelope.providerCommit is invalid',
+      'release_evidence_invalid',
+    );
   }
   requireKeys(
-    evidence.gates,
-    new Set(EXPECTED_GATES.map((gate) => gate.evidenceKey).filter(Boolean)),
-    'release evidence.gates',
+    evidence.attestations,
+    new Set(EXPECTED_GATES.map((gate) => gate.attestationKey).filter(Boolean)),
+    'release attestation envelope.attestations',
   );
-  for (const gate of EXPECTED_GATES.filter((candidate) => candidate.evidenceKey)) {
-    const value = evidence.gates[gate.evidenceKey];
+  for (const gate of EXPECTED_GATES.filter((candidate) => candidate.attestationKey)) {
+    const value = evidence.attestations[gate.attestationKey];
     if (value !== undefined) {
-      validateEvidenceItem(value, `release evidence.gates.${gate.evidenceKey}`, {
-        crossRepository: gate.kind === 'cross_repository_evidence',
+      validateEvidenceItem(value, `release attestation envelope.attestations.${gate.attestationKey}`, {
+        crossRepository: gate.kind === 'cross_repository_attestation',
       });
     }
   }
@@ -233,49 +248,164 @@ function inspectRepository(root = ROOT, environment = process.env) {
   };
 }
 
-function pass(gate, reason) {
-  return { id: gate.id, kind: gate.kind, status: 'pass', reason };
+function verified(gate, reason) {
+  return { id: gate.id, kind: gate.kind, status: 'verified', reason };
+}
+
+function attested(gate, reason) {
+  return { id: gate.id, kind: gate.kind, status: 'attested', reason };
 }
 
 function blocked(gate, reason) {
   return { id: gate.id, kind: gate.kind, status: 'blocked', reason };
 }
 
-function coverageBoundaryPasses(report) {
-  return report?.reportType === 'provider_source_coverage'
-    && report?.evidenceBoundary?.navigationReadinessTextCandidateMeaning
-      === 'catalog_text_candidate_not_unique_route_identity_or_runtime_observation'
-    && report?.evidenceBoundary?.runtimeVerification === 'not_claimed_by_source'
-    && report?.summary?.runtimeVerifiedRoutes?.numerator === null
-    && report?.summary?.runtimeVerifiedRoutes?.ratio === null
-    && Array.isArray(report?.routes)
-    && report.routes.every((route) => (
-      route.cataloged === true
-      && route.runtimeVerification?.status === 'not_claimed_by_source'
-      && route.runtimeVerification?.verified === null
-    ));
+function isStringArray(value) {
+  return Array.isArray(value)
+    && value.every((item) => typeof item === 'string' && item.length > 0);
 }
 
-function evidenceGateResult(gate, definition, repository, evidence) {
-  if (!evidence) return blocked(gate, 'release_evidence_required');
+function metricMatches(metric, numerator, denominator) {
+  const expectedRatio = denominator === 0
+    ? null
+    : Number((numerator / denominator).toFixed(4));
+  return isRecord(metric)
+    && metric.numerator === numerator
+    && metric.denominator === denominator
+    && metric.ratio === expectedRatio;
+}
+
+function routeCoverageBoundaryPasses(route) {
+  if (!isRecord(route) || typeof route.routeId !== 'string' || route.cataloged !== true) return false;
+  const readiness = route.navigationReadinessTextCandidate;
+  const content = route.contentTextCandidate;
+  const interaction = route.interactionRecipeCoverage;
+  const accessibility = route.accessibilityIdentity;
+  const runtime = route.runtimeVerification;
+  if (!isRecord(readiness)
+    || !['candidate_present', 'coverage_gap'].includes(readiness.status)
+    || !isStringArray(readiness.expectedTexts)
+    || !isRecord(readiness.targetParameters)
+    || !isStringArray(readiness.targetParameters.required)
+    || !isStringArray(readiness.targetParameters.optional)
+    || readiness.evidenceKind !== 'versioned_catalog_declaration'
+    || readiness.uniqueRouteIdentity !== false
+    || (readiness.status === 'candidate_present') !== (readiness.expectedTexts.length > 0)) {
+    return false;
+  }
+  if (!isRecord(content)
+    || !['candidate_present', 'not_declared'].includes(content.status)
+    || !isStringArray(content.contentTexts)
+    || content.evidenceKind !== 'versioned_catalog_declaration'
+    || (content.status === 'candidate_present') !== (content.contentTexts.length > 0)) {
+    return false;
+  }
+  if (!isRecord(interaction)
+    || !['recipe_present', 'not_recipe_covered'].includes(interaction.status)
+    || !isStringArray(interaction.recipeIds)
+    || !isStringArray(interaction.actionTypes)
+    || !isStringArray(interaction.selectorKinds)
+    || !isStringArray(interaction.reviewedCoordinateRecipeIds)
+    || (interaction.status === 'recipe_present') !== (interaction.recipeIds.length > 0)) {
+    return false;
+  }
+  if (!isRecord(accessibility)
+    || !['candidate_present', 'not_declared_in_provider_source']
+      .includes(accessibility.explicitIdentifierStatus)
+    || !isStringArray(accessibility.explicitIdentifierSelectors)
+    || accessibility.runtimeAvailability !== 'unknown_not_observed'
+    || (accessibility.explicitIdentifierStatus === 'candidate_present')
+      !== (accessibility.explicitIdentifierSelectors.length > 0)) {
+    return false;
+  }
+  return isRecord(runtime)
+    && runtime.status === 'not_claimed_by_source'
+    && runtime.verified === null;
+}
+
+function coverageBoundaryPasses(report) {
+  if (report?.reportType !== 'provider_source_coverage'
+    || report?.evidenceBoundary?.basis !== 'versioned_source_only'
+    || report?.evidenceBoundary?.navigationReadinessTextCandidateMeaning
+      !== 'catalog_text_candidate_not_unique_route_identity_or_runtime_observation'
+    || report?.evidenceBoundary?.accessibilityAvailability !== 'unknown_from_source'
+    || report?.evidenceBoundary?.runtimeVerification !== 'not_claimed_by_source'
+    || report?.evidenceBoundary?.editorialSuitability !== 'not_claimed_by_source'
+    || !Array.isArray(report?.routes)
+    || report.routes.length === 0
+    || !report.routes.every(routeCoverageBoundaryPasses)) {
+    return false;
+  }
+
+  const routeCount = report.routes.length;
+  const readinessCount = report.routes.filter(
+    (route) => route.navigationReadinessTextCandidate.status === 'candidate_present',
+  ).length;
+  const contentCount = report.routes.filter(
+    (route) => route.contentTextCandidate.status === 'candidate_present',
+  ).length;
+  const recipeRouteCount = report.routes.filter(
+    (route) => route.interactionRecipeCoverage.status === 'recipe_present',
+  ).length;
+  const recipeCount = report.routes.reduce(
+    (count, route) => count + route.interactionRecipeCoverage.recipeIds.length,
+    0,
+  );
+  const reviewedCoordinateRecipeCount = report.routes.reduce(
+    (count, route) => (
+      count + route.interactionRecipeCoverage.reviewedCoordinateRecipeIds.length
+    ),
+    0,
+  );
+  const explicitIdentifierCount = report.routes.filter(
+    (route) => route.accessibilityIdentity.explicitIdentifierStatus === 'candidate_present',
+  ).length;
+  const summary = report.summary;
+  return isRecord(summary)
+    && metricMatches(summary.catalogedRoutes, routeCount, routeCount)
+    && metricMatches(summary.navigationReadinessTextCandidates, readinessCount, routeCount)
+    && metricMatches(summary.contentTextCandidates, contentCount, routeCount)
+    && metricMatches(summary.interactionRecipeRoutes, recipeRouteCount, routeCount)
+    && summary.interactionRecipeRoutes.recipeCount === recipeCount
+    && summary.interactionRecipeRoutes.reviewedCoordinateRecipeCount
+      === reviewedCoordinateRecipeCount
+    && metricMatches(
+      summary.explicitAccessibilityIdentifierCandidates,
+      explicitIdentifierCount,
+      routeCount,
+    )
+    && isRecord(summary.runtimeVerifiedRoutes)
+    && summary.runtimeVerifiedRoutes.numerator === null
+    && summary.runtimeVerifiedRoutes.denominator === routeCount
+    && summary.runtimeVerifiedRoutes.ratio === null
+    && summary.runtimeVerifiedRoutes.status === 'not_claimed_by_source';
+}
+
+function attestationGateResult(gate, definition, repository, evidence) {
+  if (!evidence) return blocked(gate, 'release_attestation_required');
   if (evidence.targetVersion !== definition.targetVersion) {
-    return blocked(gate, 'evidence_target_version_mismatch');
+    return blocked(gate, 'attestation_target_version_mismatch');
   }
   if (evidence.providerCommit !== repository.commit) {
-    return blocked(gate, 'evidence_provider_commit_mismatch');
+    return blocked(gate, 'attestation_provider_commit_mismatch');
   }
-  const item = evidence.gates[gate.evidenceKey];
-  if (!item) return blocked(gate, 'gate_evidence_required');
-  if (item.status !== 'passed') return blocked(gate, `gate_evidence_${item.status}`);
-  if (gate.kind === 'cross_repository_evidence') {
-    if (item.compatibilityTest !== 'passed') {
-      return blocked(gate, `compatibility_test_${item.compatibilityTest}`);
+  const item = evidence.attestations[gate.attestationKey];
+  if (!item) return blocked(gate, 'gate_attestation_required');
+  if (item.claimedStatus !== 'passed') {
+    return blocked(gate, `attestation_claim_${item.claimedStatus}`);
+  }
+  if (gate.kind === 'cross_repository_attestation') {
+    if (item.compatibilityTestClaim !== 'passed') {
+      return blocked(gate, `compatibility_test_claim_${item.compatibilityTestClaim}`);
     }
-    if (item.providerFreeRegression !== 'passed') {
-      return blocked(gate, `provider_free_regression_${item.providerFreeRegression}`);
+    if (item.providerFreeRegressionClaim !== 'passed') {
+      return blocked(gate, `provider_free_regression_claim_${item.providerFreeRegressionClaim}`);
     }
   }
-  return pass(gate, 'evidence_passed_for_exact_provider_commit');
+  return attested(
+    gate,
+    'claim_complete_for_matching_provider_commit_manual_evidence_review_required',
+  );
 }
 
 function evaluateReleaseGates({ definition, repository, coverageReport, evidence = null }) {
@@ -292,7 +422,7 @@ function evaluateReleaseGates({ definition, repository, coverageReport, evidence
   const gates = definition.gates.map((gate) => {
     if (gate.id === 'source-coverage-truth') {
       return coverageBoundaryPasses(coverageReport)
-        ? pass(gate, 'source_categories_are_separate_and_runtime_is_unclaimed')
+        ? verified(gate, 'source_categories_are_closed_and_runtime_is_unclaimed')
         : blocked(gate, 'source_coverage_boundary_invalid');
     }
     if (gate.id === 'target-version-identity') {
@@ -301,31 +431,50 @@ function evaluateReleaseGates({ definition, repository, coverageReport, evidence
         repository.packageLockVersion,
         repository.packageLockRootVersion,
       ].every((version) => version === definition.targetVersion)
-        ? pass(gate, 'package_version_matches_target')
+        ? verified(gate, 'package_version_matches_target')
         : blocked(gate, 'package_version_does_not_match_target');
     }
     if (gate.id === 'release-commit-clean') {
       return repository.clean
-        ? pass(gate, 'release_commit_is_exact_and_worktree_is_clean')
+        ? verified(gate, 'release_commit_is_exact_and_worktree_is_clean')
         : blocked(gate, 'provider_worktree_is_not_clean');
     }
-    return evidenceGateResult(gate, definition, repository, evidence);
+    return attestationGateResult(gate, definition, repository, evidence);
   });
   const blockers = gates
     .filter((gate) => gate.status === 'blocked')
     .map((gate) => ({ gateId: gate.id, reason: gate.reason }));
-  const activationAllowed = blockers.length === 0;
+  const automatedChecksComplete = gates
+    .filter((gate) => gate.kind === 'automatic')
+    .every((gate) => gate.status === 'verified');
+  const attestationsComplete = gates
+    .filter((gate) => gate.kind !== 'automatic')
+    .every((gate) => gate.status === 'attested');
+  const readyForReleaseReview = automatedChecksComplete && attestationsComplete;
 
   return {
     schemaVersion: 1,
     targetVersion: definition.targetVersion,
     releasedBaseline: definition.releasedBaseline,
-    releaseStatus: activationAllowed ? 'pass' : 'blocked',
-    activationAllowed,
+    checklistStatus: readyForReleaseReview ? 'ready_for_release_review' : 'incomplete',
+    automatedChecksComplete,
+    attestationsComplete,
+    readyForReleaseReview,
+    releaseDecision: 'human_required',
     repository,
     sourceCoverage: coverageReport?.summary || null,
     gates,
     blockers,
+    attestationBoundary: {
+      exactProviderCommitStringMatched: Boolean(
+        evidence && evidence.providerCommit === repository.commit,
+      ),
+      consumerCommitVerifiedByTool: false,
+      attesterIdentityVerifiedByTool: false,
+      evidenceRefsAuthenticatedByTool: false,
+      commandsExecutedByTool: false,
+      releaseOwnerReviewRequired: true,
+    },
     versionBoundary: definition.versionBoundary,
   };
 }
@@ -387,7 +536,11 @@ async function main(
     const evidence = options.evidence !== undefined
       ? options.evidence
       : args.evidencePath
-        ? validateEvidence(readStrictJson(args.evidencePath, 'release evidence', { absolute: true }))
+        ? validateEvidence(readStrictJson(
+          args.evidencePath,
+          'release attestation envelope',
+          { absolute: true },
+        ))
         : null;
     const result = evaluateReleaseGates({
       definition,
@@ -396,7 +549,7 @@ async function main(
       evidence,
     });
     streams.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return result.activationAllowed ? 0 : 3;
+    return result.readyForReleaseReview ? 0 : 3;
   } catch (error) {
     streams.stderr.write(`${JSON.stringify({
       ok: false,

@@ -42,38 +42,46 @@ function repository(version = '0.2.1', overrides = {}) {
   };
 }
 
-function passedEvidence(overrides = {}) {
+function completeEvidence(overrides = {}) {
   const evidence = {
     schemaVersion: 1,
     targetVersion: '0.2.1',
     providerCommit: PROVIDER_COMMIT,
-    gates: {
+    attestations: {
       providerPreflight: {
-        status: 'passed',
+        claimedStatus: 'passed',
         evidenceRef: 'provider-preflight-on-final-commit',
       },
       p0RootNavigationRegression: {
-        status: 'passed',
+        claimedStatus: 'passed',
         evidenceRef: 'p0-root-navigation-regression-on-final-commit',
       },
       crossRepoConvergence: {
-        status: 'passed',
+        claimedStatus: 'passed',
         evidenceRef: 'cross-repo-final-commit-run',
         consumerCommit: CONSUMER_COMMIT,
         contractVersion: 1,
-        compatibilityTest: 'passed',
-        providerFreeRegression: 'passed',
+        compatibilityTestClaim: 'passed',
+        providerFreeRegressionClaim: 'passed',
       },
     },
   };
   return {
     ...evidence,
     ...overrides,
-    gates: {
-      ...evidence.gates,
-      ...(overrides.gates || {}),
+    attestations: {
+      ...evidence.attestations,
+      ...(overrides.attestations || {}),
     },
   };
+}
+
+function withoutCoverageField(pathParts) {
+  const report = structuredClone(coverageReport());
+  let parent = report;
+  for (const part of pathParts.slice(0, -1)) parent = parent[part];
+  delete parent[pathParts.at(-1)];
+  return report;
 }
 
 test('reviewed v0.2.1 definition has only P0, release identity, and convergence gates', () => {
@@ -81,24 +89,29 @@ test('reviewed v0.2.1 definition has only P0, release identity, and convergence 
   assert.equal(definition.targetVersion, '0.2.1');
   assert.equal(definition.releasedBaseline, '0.2.0');
   assert.equal(definition.versionBoundary.baselineIncludesTargetScope, false);
-  assert.deepEqual(definition.gates.map(({ id, kind, evidenceKey }) => ({
+  assert.deepEqual(definition.gates.map(({ id, kind, attestationKey }) => ({
     id,
     kind,
-    ...(evidenceKey ? { evidenceKey } : {}),
+    ...(attestationKey ? { attestationKey } : {}),
   })), EXPECTED_GATES);
 });
 
-test('current 0.2.0 source stays blocked without target evidence', () => {
+test('current 0.2.0 source has an incomplete release-review checklist', () => {
   const result = evaluateReleaseGates({
     definition: readDefinition(),
     repository: repository('0.2.0'),
     coverageReport: coverageReport(),
   });
 
-  assert.equal(result.releaseStatus, 'blocked');
-  assert.equal(result.activationAllowed, false);
+  assert.equal(result.checklistStatus, 'incomplete');
+  assert.equal(result.automatedChecksComplete, false);
+  assert.equal(result.attestationsComplete, false);
+  assert.equal(result.readyForReleaseReview, false);
+  assert.equal(result.releaseDecision, 'human_required');
+  assert.equal(Object.hasOwn(result, 'activationAllowed'), false);
+  assert.equal(Object.hasOwn(result, 'releaseStatus'), false);
   assert.deepEqual(
-    result.gates.filter((gate) => gate.status === 'pass').map((gate) => gate.id),
+    result.gates.filter((gate) => gate.status === 'verified').map((gate) => gate.id),
     ['source-coverage-truth', 'release-commit-clean'],
   );
   assert.deepEqual(result.blockers.map((blocker) => blocker.gateId), [
@@ -109,18 +122,38 @@ test('current 0.2.0 source stays blocked without target evidence', () => {
   ]);
 });
 
-test('activation passes only when every gate targets the exact final provider commit', () => {
+test('complete claims only make the checklist ready for human release review', () => {
   const result = evaluateReleaseGates({
     definition: readDefinition(),
     repository: repository(),
     coverageReport: coverageReport(),
-    evidence: passedEvidence(),
+    evidence: completeEvidence(),
   });
 
-  assert.equal(result.releaseStatus, 'pass');
-  assert.equal(result.activationAllowed, true);
+  assert.equal(result.checklistStatus, 'ready_for_release_review');
+  assert.equal(result.automatedChecksComplete, true);
+  assert.equal(result.attestationsComplete, true);
+  assert.equal(result.readyForReleaseReview, true);
+  assert.equal(result.releaseDecision, 'human_required');
   assert.deepEqual(result.blockers, []);
-  assert.equal(result.gates.every((gate) => gate.status === 'pass'), true);
+  assert.deepEqual(result.gates.map((gate) => gate.status), [
+    'verified',
+    'verified',
+    'verified',
+    'attested',
+    'attested',
+    'attested',
+  ]);
+  assert.deepEqual(result.attestationBoundary, {
+    exactProviderCommitStringMatched: true,
+    consumerCommitVerifiedByTool: false,
+    attesterIdentityVerifiedByTool: false,
+    evidenceRefsAuthenticatedByTool: false,
+    commandsExecutedByTool: false,
+    releaseOwnerReviewRequired: true,
+  });
+  assert.equal(Object.hasOwn(result, 'activationAllowed'), false);
+  assert.equal(Object.hasOwn(result, 'tagAllowed'), false);
 });
 
 test('target version identity includes both package-lock version locations', () => {
@@ -128,7 +161,7 @@ test('target version identity includes both package-lock version locations', () 
     definition: readDefinition(),
     repository: repository('0.2.1', { packageLockRootVersion: '0.2.0' }),
     coverageReport: coverageReport(),
-    evidence: passedEvidence(),
+    evidence: completeEvidence(),
   });
 
   assert.deepEqual(result.blockers, [{
@@ -137,45 +170,98 @@ test('target version identity includes both package-lock version locations', () 
   }]);
 });
 
-test('stale provider evidence and incomplete cross-repo convergence remain blockers', () => {
+test('coverage gate blocks when any promised content, recipe, or Accessibility field is absent', () => {
+  const requiredPaths = [
+    ['summary', 'contentTextCandidates'],
+    ['summary', 'contentTextCandidates', 'numerator'],
+    ['summary', 'contentTextCandidates', 'denominator'],
+    ['summary', 'contentTextCandidates', 'ratio'],
+    ['summary', 'interactionRecipeRoutes'],
+    ['summary', 'interactionRecipeRoutes', 'numerator'],
+    ['summary', 'interactionRecipeRoutes', 'denominator'],
+    ['summary', 'interactionRecipeRoutes', 'ratio'],
+    ['summary', 'interactionRecipeRoutes', 'recipeCount'],
+    ['summary', 'interactionRecipeRoutes', 'reviewedCoordinateRecipeCount'],
+    ['summary', 'explicitAccessibilityIdentifierCandidates'],
+    ['summary', 'explicitAccessibilityIdentifierCandidates', 'numerator'],
+    ['summary', 'explicitAccessibilityIdentifierCandidates', 'denominator'],
+    ['summary', 'explicitAccessibilityIdentifierCandidates', 'ratio'],
+    ['routes', 0, 'contentTextCandidate'],
+    ['routes', 0, 'contentTextCandidate', 'status'],
+    ['routes', 0, 'contentTextCandidate', 'contentTexts'],
+    ['routes', 0, 'contentTextCandidate', 'evidenceKind'],
+    ['routes', 0, 'interactionRecipeCoverage'],
+    ['routes', 0, 'interactionRecipeCoverage', 'status'],
+    ['routes', 0, 'interactionRecipeCoverage', 'recipeIds'],
+    ['routes', 0, 'interactionRecipeCoverage', 'actionTypes'],
+    ['routes', 0, 'interactionRecipeCoverage', 'selectorKinds'],
+    ['routes', 0, 'interactionRecipeCoverage', 'reviewedCoordinateRecipeIds'],
+    ['routes', 0, 'accessibilityIdentity'],
+    ['routes', 0, 'accessibilityIdentity', 'explicitIdentifierStatus'],
+    ['routes', 0, 'accessibilityIdentity', 'explicitIdentifierSelectors'],
+    ['routes', 0, 'accessibilityIdentity', 'runtimeAvailability'],
+  ];
+
+  for (const pathParts of requiredPaths) {
+    const result = evaluateReleaseGates({
+      definition: readDefinition(),
+      repository: repository(),
+      coverageReport: withoutCoverageField(pathParts),
+      evidence: completeEvidence(),
+    });
+    assert.deepEqual(
+      result.gates.find((gate) => gate.id === 'source-coverage-truth'),
+      {
+        id: 'source-coverage-truth',
+        kind: 'automatic',
+        status: 'blocked',
+        reason: 'source_coverage_boundary_invalid',
+      },
+      pathParts.join('.'),
+    );
+    assert.equal(result.readyForReleaseReview, false, pathParts.join('.'));
+  }
+});
+
+test('stale provider attestations and incomplete cross-repo claims remain blockers', () => {
   const stale = evaluateReleaseGates({
     definition: readDefinition(),
     repository: repository('0.2.1', { commit: 'c'.repeat(40) }),
     coverageReport: coverageReport(),
-    evidence: passedEvidence(),
+    evidence: completeEvidence(),
   });
   assert.equal(
     stale.gates.find((gate) => gate.id === 'p0-root-navigation-regression').reason,
-    'evidence_provider_commit_mismatch',
+    'attestation_provider_commit_mismatch',
   );
 
   const incomplete = evaluateReleaseGates({
     definition: readDefinition(),
     repository: repository(),
     coverageReport: coverageReport(),
-    evidence: passedEvidence({
-      gates: {
+    evidence: completeEvidence({
+      attestations: {
         crossRepoConvergence: {
-          status: 'passed',
+          claimedStatus: 'passed',
           evidenceRef: 'cross-repo-final-commit-run',
           consumerCommit: CONSUMER_COMMIT,
           contractVersion: 1,
-          compatibilityTest: 'passed',
-          providerFreeRegression: 'failed',
+          compatibilityTestClaim: 'passed',
+          providerFreeRegressionClaim: 'failed',
         },
       },
     }),
   });
-  assert.equal(incomplete.releaseStatus, 'blocked');
+  assert.equal(incomplete.checklistStatus, 'incomplete');
   assert.deepEqual(incomplete.blockers, [{
     gateId: 'cross-repo-convergence',
-    reason: 'provider_free_regression_failed',
+    reason: 'provider_free_regression_claim_failed',
   }]);
 });
 
-test('release evidence is closed and provider-local CLI returns pass or blocked JSON', async () => {
+test('release attestation envelope is closed and CLI reports review readiness only', async () => {
   assert.throws(
-    () => validateEvidence({ ...passedEvidence(), extra: true }),
+    () => validateEvidence({ ...completeEvidence(), extra: true }),
     /unsupported field/,
   );
 
@@ -184,10 +270,13 @@ test('release evidence is closed and provider-local CLI returns pass or blocked 
     definition: readDefinition(),
     repository: repository(),
     coverageReport: coverageReport(),
-    evidence: passedEvidence(),
+    evidence: completeEvidence(),
   }), 0);
   assert.equal(passedOutput.values().stderr, '');
-  assert.equal(JSON.parse(passedOutput.values().stdout).releaseStatus, 'pass');
+  assert.equal(passedOutput.values().stdout.includes('provider-preflight-on-final-commit'), false);
+  const ready = JSON.parse(passedOutput.values().stdout);
+  assert.equal(ready.readyForReleaseReview, true);
+  assert.equal(ready.releaseDecision, 'human_required');
 
   const blockedOutput = streams();
   assert.equal(await main(['check', '--target', '0.2.1', '--json'], blockedOutput, {
@@ -197,5 +286,5 @@ test('release evidence is closed and provider-local CLI returns pass or blocked 
     evidence: null,
   }), 3);
   assert.equal(blockedOutput.values().stderr, '');
-  assert.equal(JSON.parse(blockedOutput.values().stdout).releaseStatus, 'blocked');
+  assert.equal(JSON.parse(blockedOutput.values().stdout).checklistStatus, 'incomplete');
 });
