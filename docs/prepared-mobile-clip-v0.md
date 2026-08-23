@@ -23,11 +23,18 @@ The planner accepts the current recording bundle only when all of these facts ar
   assertion, and a final result hold with `zoomFocus`;
 - every camera action has normalized `zoomFocus` that keeps its interaction geometry on-screen;
 - a native long press is identified by `execution.longPress: true` and has a sufficiently long
-  observed duration.
+  observed duration;
+- each next camera action leaves the full profile transition lead after the previous stable window:
+  tap through its emphasis, long press through completion, swipe through its trail hold, and the
+  result hold through completion.
 
 The planner never infers long press from an event ID or elapsed time. A tap whose observed duration
 looks like a long press but lacks the explicit marker fails as `ambiguous_action_semantics`. This
 keeps acquisition semantics from being silently rewritten during presentation.
+
+The planner also never shortens camera lead time to fit adjacent actions. If the next transition
+would start while the previous action or overlay must remain stable, it fails as
+`insufficient_camera_transition_gap` and publishes no prepared artifacts.
 
 ## Deterministic plan and render
 
@@ -38,13 +45,18 @@ timing precision. It has no generated timestamp and no per-event-ID tuning.
 
 `src/prepared-renderer.js` uses local FFmpeg only after the plan passes. The single v0 profile:
 
-- preserves the source dimensions, aspect ratio, duration, and phone pixels;
+- preserves source dimensions, aspect ratio, and duration, and retains the source UI as the visual
+  content while camera crop/scale/pan and interaction overlays change its presentation;
 - applies deterministic cosine camera moves from `zoomFocus`;
 - shows a short expanding tap emphasis;
 - keeps an explicit long-press emphasis visible for its observed duration;
 - reveals ordered swipe trail samples from `touchPath`, preserving direction;
 - keeps the asserted result region focused during the observed final hold;
 - encodes H.264 with `libx264`, `yuv420p`, and no audio.
+
+The prepared video is not pixel-identical to raw input. FFmpeg performs a lossy H.264 re-encode at
+CRF 18, converts output to `yuv420p`, applies camera transforms, and draws overlays. Plan and
+provenance therefore record `pixelIdentityPreserved: false` and the exact re-encode settings.
 
 There are no captions, music, device shell, scene background, Marketing Video timeline layout, or
 manual per-clip keyframes.

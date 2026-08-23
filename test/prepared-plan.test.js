@@ -40,6 +40,15 @@ test('pure planner is deterministic and preserves source geometry and upstream t
   assert.equal(first.source.recording.anchorSemantics, actions.recording.anchorSemantics);
   assert.equal(first.source.timing.precisionPreserved, true);
   assert.equal(first.evidenceBoundary.readyToPlace, 'pending_human_review');
+  assert.deepEqual(first.evidenceBoundary.transformation, {
+    sourceVisualContent: 'retained_as_visual_source',
+    cameraTransform: 'crop_scale_pan_applied',
+    interactionOverlays: 'rendered_over_source_visuals',
+    pixelIdentityPreserved: false,
+    reencode: {
+      mode: 'lossy', codec: 'h264', encoder: 'libx264', pixelFormat: 'yuv420p', crf: 18,
+    },
+  });
 });
 
 test('plan distinguishes normal tap, explicit long press, swipe direction/path, and result hold', () => {
@@ -54,6 +63,89 @@ test('plan distinguishes normal tap, explicit long press, swipe direction/path, 
   assert.equal(plan.presentation.result.assertionId, 'fixture-result-assert');
   assert.equal(plan.presentation.result.holdId, 'fixture-result-hold');
   assert.equal(plan.presentation.camera.keyframes.at(-1).atMs, 12000);
+  assert.equal(plan.presentation.camera.transitionLeadMs, 480);
+});
+
+test('camera remains stable through every interaction window and reserves full transition leads', () => {
+  const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
+  const plan = buildPreparedPlan(fixtureActions(), profile, media);
+  assert.deepEqual(
+    plan.presentation.interactions.map((interaction) => interaction.requiredStableUntilOffsetMs),
+    [1080, 4800, 7180, 12000],
+  );
+  for (const [index, interaction] of plan.presentation.interactions.entries()) {
+    const roundedPose = {
+      zoom: Number(interaction.cameraPose.zoom.toFixed(6)),
+      centerX: Number(interaction.cameraPose.centerX.toFixed(6)),
+      centerY: Number(interaction.cameraPose.centerY.toFixed(6)),
+    };
+    const stableKeyframe = plan.presentation.camera.keyframes.find(
+      (keyframe) => keyframe.atMs === interaction.requiredStableUntilOffsetMs,
+    );
+    assert.deepEqual(
+      { zoom: stableKeyframe.zoom, centerX: stableKeyframe.centerX, centerY: stableKeyframe.centerY },
+      roundedPose,
+    );
+    assert.equal(
+      plan.presentation.camera.keyframes
+        .filter((keyframe) =>
+          keyframe.atMs >= interaction.timing.startedOffsetMs &&
+          keyframe.atMs <= interaction.requiredStableUntilOffsetMs)
+        .every((keyframe) =>
+          keyframe.zoom === roundedPose.zoom &&
+          keyframe.centerX === roundedPose.centerX &&
+          keyframe.centerY === roundedPose.centerY),
+      true,
+    );
+    const nextInteraction = plan.presentation.interactions[index + 1];
+    if (nextInteraction) {
+      const nextTransitionAt = nextInteraction.timing.startedOffsetMs - profile.camera.leadMs;
+      assert.equal(nextTransitionAt >= interaction.requiredStableUntilOffsetMs, true);
+    }
+  }
+});
+
+test('camera accepts an exact full-lead boundary without overwriting the previous hold', () => {
+  const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
+  const actions = fixtureActions();
+  const longPress = actions.observed.find((event) => event.id === 'fixture-long-press');
+  longPress.startedOffsetMs = 1560;
+  longPress.completedOffsetMs = 4560;
+  const plan = buildPreparedPlan(actions, profile, media);
+  const [tap] = plan.presentation.interactions;
+  const boundaryKeyframe = plan.presentation.camera.keyframes.find(
+    (keyframe) => keyframe.atMs === tap.requiredStableUntilOffsetMs,
+  );
+  assert.deepEqual(
+    { zoom: boundaryKeyframe.zoom, centerX: boundaryKeyframe.centerX, centerY: boundaryKeyframe.centerY },
+    {
+      zoom: Number(tap.cameraPose.zoom.toFixed(6)),
+      centerX: Number(tap.cameraPose.centerX.toFixed(6)),
+      centerY: Number(tap.cameraPose.centerY.toFixed(6)),
+    },
+  );
+});
+
+test('camera fails closed for zero-gap and short-gap actions instead of shortening transition lead', () => {
+  const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
+  for (const [startedOffsetMs, availableTransitionLeadMs] of [[1080, 0], [1400, 320]]) {
+    const actions = fixtureActions();
+    const longPress = actions.observed.find((event) => event.id === 'fixture-long-press');
+    longPress.startedOffsetMs = startedOffsetMs;
+    longPress.completedOffsetMs = startedOffsetMs + 3000;
+    assert.throws(
+      () => buildPreparedPlan(actions, profile, media),
+      (error) => {
+        assert.equal(error.code, 'insufficient_camera_transition_gap');
+        assert.equal(error.details.previousActionId, 'fixture-tap');
+        assert.equal(error.details.nextActionId, 'fixture-long-press');
+        assert.equal(error.details.previousRequiredStableUntilMs, 1080);
+        assert.equal(error.details.requiredTransitionLeadMs, 480);
+        assert.equal(error.details.availableTransitionLeadMs, availableTransitionLeadMs);
+        return true;
+      },
+    );
+  }
 });
 
 test('current strict recording recipe compiles without event-id-specific presentation rules', () => {
@@ -61,28 +153,21 @@ test('current strict recording recipe compiles without event-id-specific present
   const recipes = readRecipes(catalog);
   const recipePlan = planRecipe(catalog, recipes, 'renbao.kline-main-force-swipe');
   const planned = recipePlan.planned.filter((event) => event.phase === 'in_record');
-  let cursor = 300;
-  const observed = planned.map((action) => {
-    const elapsed = action.type === 'hold'
-      ? 2500
-      : action.execution?.longPress === true
-        ? 3000
-        : action.type === 'swipe'
-          ? 900
-          : 400;
-    const event = {
+  const schedules = [
+    [600, 1000],
+    [1800, 4800],
+    [5600, 6500],
+    [6800, 7200],
+    [8000, 12000],
+  ];
+  const observed = planned.map((action, index) => ({
       id: action.id,
       status: 'passed',
-      startedOffsetMs: cursor,
-      completedOffsetMs: cursor + elapsed,
+      startedOffsetMs: schedules[index][0],
+      completedOffsetMs: schedules[index][1],
       timingSource: 'synthetic_current_recipe_fixture',
       precision: 'fixture_only',
-    };
-    cursor += elapsed + 300;
-    return event;
-  });
-  const lastHold = observed.at(-1);
-  lastHold.completedOffsetMs = 12000;
+    }));
   const actions = {
     schemaVersion: 1,
     recipe: recipePlan.recipe,

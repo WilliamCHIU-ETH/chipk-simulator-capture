@@ -441,39 +441,38 @@ function buildPreparedPlan(actions, profile, mediaInput) {
     new Set(['tap', 'long_press', 'swipe', 'result_hold']).has(entry.kind));
   const keyframes = [{ atMs: 0, zoom: 1, centerX: 0.5, centerY: 0.5 }];
   const interactions = [];
-  let previousEndMs = 0;
+  let previousRequiredStableUntilMs = 0;
+  let previousActionId = 'composition_start';
   let previousPose = { zoom: 1, centerX: 0.5, centerY: 0.5 };
   for (const entry of cameraEntries) {
     const { action, kind, timing } = entry;
     const pose = cameraPose(action, kind, profile);
-    const transitionStartMs = Math.max(previousEndMs, timing.startedOffsetMs - profile.camera.leadMs);
-    if (transitionStartMs > timing.startedOffsetMs) {
-      fail('invalid_action_timeline', `${action.id} 前沒有 camera transition 空間`);
-    }
-    appendKeyframe(keyframes, { atMs: transitionStartMs, ...previousPose });
-    appendKeyframe(keyframes, { atMs: timing.startedOffsetMs, ...pose });
-    appendKeyframe(keyframes, { atMs: timing.completedOffsetMs, ...pose });
-
     const base = {
       id: action.id,
       kind,
       timing,
       cameraPose: pose,
     };
+    let interaction;
+    let requiredStableUntilOffsetMs;
     if (kind === 'tap' || kind === 'long_press') {
       const touchPoint = normalizedPoint(action.touchPoint, `${action.id}.touchPoint`);
-      interactions.push({
+      const emphasisEndOffsetMs = kind === 'tap'
+        ? timing.startedOffsetMs + profile.emphasis.tapPulseMs
+        : timing.completedOffsetMs;
+      requiredStableUntilOffsetMs = emphasisEndOffsetMs;
+      interaction = {
         ...base,
         touchPoint,
         screenPoint: projectPoint(touchPoint, pose, `${action.id}.touchPoint`),
-        emphasisEndOffsetMs: kind === 'tap'
-          ? Math.min(durationMs, timing.startedOffsetMs + profile.emphasis.tapPulseMs)
-          : timing.completedOffsetMs,
-      });
+        emphasisEndOffsetMs,
+        requiredStableUntilOffsetMs,
+      };
     } else if (kind === 'swipe') {
       const start = normalizedPoint(action.touchPath?.start, `${action.id}.touchPath.start`);
       const end = normalizedPoint(action.touchPath?.end, `${action.id}.touchPath.end`);
-      interactions.push({
+      requiredStableUntilOffsetMs = timing.completedOffsetMs + profile.emphasis.swipeTrailHoldMs;
+      interaction = {
         ...base,
         touchPath: { start, end },
         screenPath: {
@@ -481,11 +480,34 @@ function buildPreparedPlan(actions, profile, mediaInput) {
           end: projectPoint(end, pose, `${action.id}.touchPath.end`),
         },
         direction: swipeDirection(start, end),
-      });
+        requiredStableUntilOffsetMs,
+      };
     } else {
-      interactions.push(base);
+      requiredStableUntilOffsetMs = timing.completedOffsetMs;
+      interaction = { ...base, requiredStableUntilOffsetMs };
     }
-    previousEndMs = timing.completedOffsetMs;
+
+    const transitionStartMs = timing.startedOffsetMs - profile.camera.leadMs;
+    if (transitionStartMs < previousRequiredStableUntilMs) {
+      fail(
+        'insufficient_camera_transition_gap',
+        `${action.id} 前沒有完整且不干擾上一個 action 的 camera transition lead`,
+        {
+          previousActionId,
+          nextActionId: action.id,
+          previousRequiredStableUntilMs,
+          nextActionStartedOffsetMs: timing.startedOffsetMs,
+          requiredTransitionLeadMs: profile.camera.leadMs,
+          availableTransitionLeadMs: timing.startedOffsetMs - previousRequiredStableUntilMs,
+        },
+      );
+    }
+    appendKeyframe(keyframes, { atMs: transitionStartMs, ...previousPose });
+    appendKeyframe(keyframes, { atMs: timing.startedOffsetMs, ...pose });
+    appendKeyframe(keyframes, { atMs: requiredStableUntilOffsetMs, ...pose });
+    interactions.push(interaction);
+    previousRequiredStableUntilMs = requiredStableUntilOffsetMs;
+    previousActionId = action.id;
     previousPose = pose;
   }
   appendKeyframe(keyframes, { atMs: durationMs, ...previousPose });
@@ -527,6 +549,7 @@ function buildPreparedPlan(actions, profile, mediaInput) {
     presentation: {
       camera: {
         easing: profile.camera.easing,
+        transitionLeadMs: profile.camera.leadMs,
         keyframes,
       },
       interactions,
@@ -540,7 +563,19 @@ function buildPreparedPlan(actions, profile, mediaInput) {
     evidenceBoundary: {
       readyToPlace: 'pending_human_review',
       timing: 'preserves upstream precision and does not claim frame-accurate touch timing',
-      sourcePixels: 'unchanged_except_camera_transform_and_interaction_emphasis',
+      transformation: {
+        sourceVisualContent: 'retained_as_visual_source',
+        cameraTransform: 'crop_scale_pan_applied',
+        interactionOverlays: 'rendered_over_source_visuals',
+        pixelIdentityPreserved: false,
+        reencode: {
+          mode: 'lossy',
+          codec: profile.output.codec,
+          encoder: profile.output.encoder,
+          pixelFormat: profile.output.pixelFormat,
+          crf: profile.output.crf,
+        },
+      },
       excluded: ['captions', 'music', 'device_shell', 'marketing_scene_layout', 'manual_per_clip_keyframes'],
     },
   };

@@ -65,7 +65,7 @@ test('filter is deterministic and contains camera, tap, long-press, and swipe pr
   assert.equal(second, first);
   assert.match(first, /zoompan=/);
   assert.match(first, /drawbox=/);
-  assert.match(first, /between\(t,0\.2,0\.416\)/);
+  assert.match(first, /between\(t,0\.6,0\.816\)/);
   assert.match(first, /between\(t,1\.8,4\.8\)/);
   assert.equal(first.includes('fixture-tap'), false);
 });
@@ -113,6 +113,15 @@ test('renderer publishes prepared video, deterministic plan, and provenance atom
   assert.equal(manifest.output.role, 'experimental-prepared-video');
   assert.equal(manifest.review.status, 'pending_human_review');
   assert.equal(manifest.tool.ffmpeg, 'fixture-renderer 1');
+  assert.deepEqual(manifest.transformation, {
+    sourceVisualContent: 'retained_as_visual_source',
+    cameraTransform: 'crop_scale_pan_applied',
+    interactionOverlays: 'rendered_over_source_visuals',
+    pixelIdentityPreserved: false,
+    reencode: {
+      mode: 'lossy', codec: 'h264', encoder: 'libx264', pixelFormat: 'yuv420p', crf: 18,
+    },
+  });
 });
 
 test('renderer rejects provenance mismatch and publishes nothing', async (t) => {

@@ -43,7 +43,7 @@ function fixtureActions() {
     },
   ];
   const timings = [
-    [200, 600, 'fixture-tap'],
+    [600, 1000, 'fixture-tap'],
     [1800, 4800, 'fixture-long-press'],
     [5800, 7000, 'fixture-swipe'],
     [7200, 7600, 'fixture-result-assert'],

@@ -501,6 +501,7 @@ async function renderPrepared(input, deps = {}) {
         filterSha256: sha256Buffer(filter),
         profileCanonicalSha256: canonicalDigest(input.profile),
       },
+      transformation: plan.evidenceBoundary.transformation,
       review: {
         status: 'pending_human_review',
         requiredChecks: [
