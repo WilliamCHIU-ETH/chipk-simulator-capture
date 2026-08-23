@@ -13,8 +13,25 @@ const {
 } = require('../src/prepared-plan');
 const { fixtureActions, media } = require('./helpers/prepared-fixture');
 
+const reviewedCatalog = readCatalog();
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function assertFullFocusVisible(cameraPose) {
+  const visibleSize = 1 / cameraPose.zoom;
+  const viewport = {
+    left: cameraPose.centerX - visibleSize / 2,
+    right: cameraPose.centerX + visibleSize / 2,
+    top: cameraPose.centerY - visibleSize / 2,
+    bottom: cameraPose.centerY + visibleSize / 2,
+  };
+  const epsilon = 0.000001;
+  assert.equal(cameraPose.focus.x >= viewport.left - epsilon, true);
+  assert.equal(cameraPose.focus.x + cameraPose.focus.width <= viewport.right + epsilon, true);
+  assert.equal(cameraPose.focus.y >= viewport.top - epsilon, true);
+  assert.equal(cameraPose.focus.y + cameraPose.focus.height <= viewport.bottom + epsilon, true);
 }
 
 test('experimental profiles file is closed and contains one full-phone profile', () => {
@@ -30,8 +47,13 @@ test('experimental profiles file is closed and contains one full-phone profile',
 test('pure planner is deterministic and preserves source geometry and upstream timing semantics', () => {
   const profile = getProfile(clone(profilesFile), 'chipk.full-phone-portrait.v0');
   const actions = fixtureActions();
-  const first = buildPreparedPlan(actions, profile, media);
-  const second = buildPreparedPlan(clone(actions), clone(profile), { ...media });
+  const first = buildPreparedPlan(actions, profile, media, reviewedCatalog);
+  const second = buildPreparedPlan(
+    clone(actions),
+    clone(profile),
+    { ...media },
+    clone(reviewedCatalog),
+  );
   assert.deepEqual(second, first);
   const { sha256: _, ...withoutDigest } = first;
   assert.equal(first.sha256, canonicalDigest(withoutDigest));
@@ -39,6 +61,16 @@ test('pure planner is deterministic and preserves source geometry and upstream t
   assert.equal(first.output.height, 2622);
   assert.equal(first.source.recording.anchorSemantics, actions.recording.anchorSemantics);
   assert.equal(first.source.timing.precisionPreserved, true);
+  assert.deepEqual(first.source.routePolicy, {
+    catalogVersion: reviewedCatalog.catalogVersion,
+    catalogCanonicalSha256: canonicalDigest(reviewedCatalog),
+    routeId: 'chipk.stock.kline',
+    captureAllowed: true,
+    sideEffectRisk: 'none',
+    requiresRootNavigation: false,
+    verdict: 'capture_allowed_read_only',
+    validationBasis: 'validated_against_current_reviewed_catalog_at_preparation',
+  });
   assert.equal(first.evidenceBoundary.readyToPlace, 'pending_human_review');
   assert.deepEqual(first.evidenceBoundary.transformation, {
     sourceVisualContent: 'retained_as_visual_source',
@@ -53,7 +85,7 @@ test('pure planner is deterministic and preserves source geometry and upstream t
 
 test('plan distinguishes normal tap, explicit long press, swipe direction/path, and result hold', () => {
   const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
-  const plan = buildPreparedPlan(fixtureActions(), profile, media);
+  const plan = buildPreparedPlan(fixtureActions(), profile, media, reviewedCatalog);
   assert.deepEqual(plan.presentation.interactions.map((item) => item.kind), [
     'tap', 'long_press', 'swipe', 'result_hold',
   ]);
@@ -64,11 +96,40 @@ test('plan distinguishes normal tap, explicit long press, swipe direction/path, 
   assert.equal(plan.presentation.result.holdId, 'fixture-result-hold');
   assert.equal(plan.presentation.camera.keyframes.at(-1).atMs, 12000);
   assert.equal(plan.presentation.camera.transitionLeadMs, 480);
+  const resultHold = plan.presentation.interactions.find((item) => item.kind === 'result_hold');
+  assert.equal(resultHold.cameraPose.zoomDecision.profileRequestedZoom, 1.32);
+  assert.equal(resultHold.cameraPose.zoomDecision.clamped, true);
+  assert.equal(resultHold.cameraPose.zoomDecision.clampReason, 'preserve_full_zoom_focus');
+  assert.equal(resultHold.cameraPose.zoom <= 1 / 0.92, true);
+  assertFullFocusVisible(resultHold.cameraPose);
+  const resultKeyframe = plan.presentation.camera.keyframes.find(
+    (keyframe) => keyframe.atMs === resultHold.timing.startedOffsetMs,
+  );
+  assert.equal(resultKeyframe.zoom, resultHold.cameraPose.zoomDecision.effectiveZoom);
+  assert.equal(resultKeyframe.zoom <= 1 / 0.92, true);
+});
+
+test('camera preserves the full zoomFocus for wide, tall, and edge-aligned regions', () => {
+  const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
+  const actions = fixtureActions();
+  const tap = actions.planned.find((action) => action.id === 'fixture-tap');
+  tap.zoomFocus = { x: 0.2, y: 0.8, width: 0.3, height: 0.2 };
+  const longPress = actions.planned.find((action) => action.id === 'fixture-long-press');
+  longPress.zoomFocus = { x: 0.8, y: 0.1, width: 0.2, height: 0.8 };
+  const plan = buildPreparedPlan(actions, profile, media, reviewedCatalog);
+  for (const interaction of plan.presentation.interactions) {
+    assertFullFocusVisible(interaction.cameraPose);
+  }
+  const tallPose = plan.presentation.interactions.find((item) => item.kind === 'long_press').cameraPose;
+  assert.equal(tallPose.zoomDecision.profileRequestedZoom, 1.48);
+  assert.equal(tallPose.zoomDecision.maxFocusPreservingZoom, 1.25);
+  assert.equal(tallPose.zoomDecision.effectiveZoom, 1.25);
+  assert.equal(tallPose.zoomDecision.clamped, true);
 });
 
 test('camera remains stable through every interaction window and reserves full transition leads', () => {
   const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
-  const plan = buildPreparedPlan(fixtureActions(), profile, media);
+  const plan = buildPreparedPlan(fixtureActions(), profile, media, reviewedCatalog);
   assert.deepEqual(
     plan.presentation.interactions.map((interaction) => interaction.requiredStableUntilOffsetMs),
     [1080, 4800, 7180, 12000],
@@ -111,7 +172,7 @@ test('camera accepts an exact full-lead boundary without overwriting the previou
   const longPress = actions.observed.find((event) => event.id === 'fixture-long-press');
   longPress.startedOffsetMs = 1560;
   longPress.completedOffsetMs = 4560;
-  const plan = buildPreparedPlan(actions, profile, media);
+  const plan = buildPreparedPlan(actions, profile, media, reviewedCatalog);
   const [tap] = plan.presentation.interactions;
   const boundaryKeyframe = plan.presentation.camera.keyframes.find(
     (keyframe) => keyframe.atMs === tap.requiredStableUntilOffsetMs,
@@ -134,7 +195,7 @@ test('camera fails closed for zero-gap and short-gap actions instead of shorteni
     longPress.startedOffsetMs = startedOffsetMs;
     longPress.completedOffsetMs = startedOffsetMs + 3000;
     assert.throws(
-      () => buildPreparedPlan(actions, profile, media),
+      () => buildPreparedPlan(actions, profile, media, reviewedCatalog),
       (error) => {
         assert.equal(error.code, 'insufficient_camera_transition_gap');
         assert.equal(error.details.previousActionId, 'fixture-tap');
@@ -186,11 +247,41 @@ test('current strict recording recipe compiles without event-id-specific present
     observed,
   };
   const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
-  const plan = buildPreparedPlan(actions, profile, media);
+  const plan = buildPreparedPlan(actions, profile, media, catalog);
   assert.equal(plan.source.recipe.id, 'renbao.kline-main-force-swipe');
+  assert.equal(plan.source.routePolicy.routeId, 'chipk.stock.kline');
+  assert.equal(plan.source.routePolicy.catalogVersion, catalog.catalogVersion);
   assert.deepEqual(plan.presentation.interactions.map((item) => item.kind), [
     'tap', 'long_press', 'swipe', 'result_hold',
   ]);
+  const resultHold = plan.presentation.interactions.find((item) => item.kind === 'result_hold');
+  assert.equal(resultHold.cameraPose.zoomDecision.clamped, true);
+  assert.equal(resultHold.cameraPose.zoom <= 1 / resultHold.cameraPose.focus.width, true);
+  assertFullFocusVisible(resultHold.cameraPose);
+});
+
+test('planner rejects unknown, capture-forbidden, and side-effecting routes', () => {
+  const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
+  const unknown = fixtureActions();
+  unknown.routeId = 'chipk.retired.route';
+  assert.throws(
+    () => buildPreparedPlan(unknown, profile, media, reviewedCatalog),
+    { code: 'unreviewed_route' },
+  );
+
+  const forbiddenCatalog = clone(reviewedCatalog);
+  forbiddenCatalog.routes.find((route) => route.id === 'chipk.stock.kline').captureAllowed = false;
+  assert.throws(
+    () => buildPreparedPlan(fixtureActions(), profile, media, forbiddenCatalog),
+    { code: 'route_not_capture_allowed' },
+  );
+
+  const sideEffectCatalog = clone(reviewedCatalog);
+  sideEffectCatalog.routes.find((route) => route.id === 'chipk.stock.kline').sideEffectRisk = 'write';
+  assert.throws(
+    () => buildPreparedPlan(fixtureActions(), profile, media, sideEffectCatalog),
+    { code: 'route_not_read_only' },
+  );
 });
 
 test('planner fails closed when observed evidence or action geometry is incomplete', () => {
@@ -198,20 +289,20 @@ test('planner fails closed when observed evidence or action geometry is incomple
   const incomplete = fixtureActions();
   incomplete.timing.observedComplete = false;
   incomplete.timing.missingObservedEventIds = ['fixture-swipe'];
-  assert.throws(() => buildPreparedPlan(incomplete, profile, media), {
+  assert.throws(() => buildPreparedPlan(incomplete, profile, media, reviewedCatalog), {
     code: 'incomplete_action_evidence',
   });
 
   const noHoldFocus = fixtureActions();
   delete noHoldFocus.planned.find((action) => action.type === 'hold').zoomFocus;
-  assert.throws(() => buildPreparedPlan(noHoldFocus, profile, media), {
+  assert.throws(() => buildPreparedPlan(noHoldFocus, profile, media, reviewedCatalog), {
     code: 'insufficient_action_semantics',
   });
 
   const noAssertion = fixtureActions();
   noAssertion.planned = noAssertion.planned.filter((action) => action.type !== 'assert');
   noAssertion.observed = noAssertion.observed.filter((event) => event.id !== 'fixture-result-assert');
-  assert.throws(() => buildPreparedPlan(noAssertion, profile, media), {
+  assert.throws(() => buildPreparedPlan(noAssertion, profile, media, reviewedCatalog), {
     code: 'incomplete_action_evidence',
   });
 });
@@ -221,7 +312,7 @@ test('planner never infers a long press from an id or long elapsed timing', () =
   const ambiguous = fixtureActions();
   const longPress = ambiguous.planned.find((action) => action.id === 'fixture-long-press');
   delete longPress.execution.longPress;
-  assert.throws(() => buildPreparedPlan(ambiguous, profile, media), {
+  assert.throws(() => buildPreparedPlan(ambiguous, profile, media, reviewedCatalog), {
     code: 'ambiguous_action_semantics',
   });
 });
@@ -229,17 +320,21 @@ test('planner never infers a long press from an id or long elapsed timing', () =
 test('planner rejects landscape, duration mismatch, and touch geometry outside the focused camera', () => {
   const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
   assert.throws(
-    () => buildPreparedPlan(fixtureActions(), profile, { ...media, width: 2622, height: 1206 }),
+    () => buildPreparedPlan(
+      fixtureActions(), profile, { ...media, width: 2622, height: 1206 }, reviewedCatalog,
+    ),
     { code: 'unsupported_source_media' },
   );
   assert.throws(
-    () => buildPreparedPlan(fixtureActions(), profile, { ...media, durationSeconds: 11 }),
+    () => buildPreparedPlan(
+      fixtureActions(), profile, { ...media, durationSeconds: 11 }, reviewedCatalog,
+    ),
     { code: 'source_media_mismatch' },
   );
   const unsafe = fixtureActions();
   const swipe = unsafe.planned.find((action) => action.type === 'swipe');
   swipe.touchPath.start = { x: 0, y: 0 };
-  assert.throws(() => buildPreparedPlan(unsafe, profile, media), {
+  assert.throws(() => buildPreparedPlan(unsafe, profile, media, reviewedCatalog), {
     code: 'unsafe_presentation_geometry',
   });
 });

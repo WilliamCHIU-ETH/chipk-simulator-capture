@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { validateCatalog: validateReviewedCatalog } = require('../scripts/simulator-capture');
 
 const PREPARED_PLAN_SCHEMA_VERSION = 1;
 const PLANNER_ID = 'chipk-prepared-plan';
@@ -85,6 +86,47 @@ function canonicalize(value) {
 
 function canonicalDigest(value) {
   return crypto.createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex');
+}
+
+function resolveReviewedRoutePolicy(catalog, routeId) {
+  try {
+    validateReviewedCatalog(catalog);
+  } catch (error) {
+    fail('invalid_route_catalog', 'reviewed route catalog 無法通過驗證', {
+      catalogError: error?.code || 'catalog_invalid',
+    });
+  }
+  const catalogVersion = requireString(
+    catalog.catalogVersion,
+    'catalog.catalogVersion',
+    'invalid_route_catalog',
+  );
+  const route = catalog.routes.find((candidate) => candidate.id === routeId);
+  if (!route) {
+    fail('unreviewed_route', `route ${routeId} 不在目前 reviewed catalog`, { routeId });
+  }
+  if (route.captureAllowed !== true) {
+    fail('route_not_capture_allowed', `route ${routeId} 未允許 capture`, { routeId });
+  }
+  if (route.sideEffectRisk !== 'none') {
+    fail('route_not_read_only', `route ${routeId} 不是 read-only`, {
+      routeId,
+      sideEffectRisk: route.sideEffectRisk,
+    });
+  }
+  const policyFields = {
+    routeId,
+    captureAllowed: true,
+    sideEffectRisk: 'none',
+    requiresRootNavigation: route.requiresRootNavigation === true,
+  };
+  return {
+    catalogVersion,
+    catalogCanonicalSha256: canonicalDigest(catalog),
+    ...policyFields,
+    verdict: 'capture_allowed_read_only',
+    validationBasis: 'validated_against_current_reviewed_catalog_at_preparation',
+  };
 }
 
 function validateStringArray(value, label, allowed) {
@@ -274,14 +316,51 @@ function eventTiming(action, observed, durationMs, toleranceMs, profile) {
 
 function cameraPose(action, kind, profile) {
   const focus = normalizedFocus(action.zoomFocus, `${action.id}.zoomFocus`);
-  const zoom = profile.camera.zoomByKind[kind];
+  const profileRequestedZoom = profile.camera.zoomByKind[kind];
+  const maxFocusPreservingZoom = Math.min(1 / focus.width, 1 / focus.height);
+  const zoom = Math.max(
+    1,
+    Math.floor((Math.min(profileRequestedZoom, maxFocusPreservingZoom) + Number.EPSILON) * 1e6) / 1e6,
+  );
   const visibleWidth = 1 / zoom;
   const visibleHeight = 1 / zoom;
   const desiredCenterX = focus.x + focus.width / 2;
   const desiredCenterY = focus.y + focus.height / 2;
-  const centerX = Math.min(1 - visibleWidth / 2, Math.max(visibleWidth / 2, desiredCenterX));
-  const centerY = Math.min(1 - visibleHeight / 2, Math.max(visibleHeight / 2, desiredCenterY));
-  return { zoom, centerX, centerY, focus };
+  const centerX = Number(
+    Math.min(1 - visibleWidth / 2, Math.max(visibleWidth / 2, desiredCenterX)).toFixed(6),
+  );
+  const centerY = Number(
+    Math.min(1 - visibleHeight / 2, Math.max(visibleHeight / 2, desiredCenterY)).toFixed(6),
+  );
+  const epsilon = 0.000001;
+  const viewport = {
+    left: centerX - visibleWidth / 2,
+    right: centerX + visibleWidth / 2,
+    top: centerY - visibleHeight / 2,
+    bottom: centerY + visibleHeight / 2,
+  };
+  if (
+    focus.x < viewport.left - epsilon ||
+    focus.x + focus.width > viewport.right + epsilon ||
+    focus.y < viewport.top - epsilon ||
+    focus.y + focus.height > viewport.bottom + epsilon
+  ) {
+    fail('unsafe_presentation_geometry', `${action.id}.zoomFocus 無法完整保留在 camera viewport`);
+  }
+  const clamped = maxFocusPreservingZoom < profileRequestedZoom;
+  return {
+    zoom,
+    centerX,
+    centerY,
+    focus,
+    zoomDecision: {
+      profileRequestedZoom,
+      maxFocusPreservingZoom,
+      effectiveZoom: zoom,
+      clamped,
+      clampReason: clamped ? 'preserve_full_zoom_focus' : null,
+    },
+  };
 }
 
 function projectPoint(point, pose, label) {
@@ -323,7 +402,7 @@ function appendKeyframe(keyframes, keyframe) {
   else keyframes.push(rounded);
 }
 
-function buildPreparedPlan(actions, profile, mediaInput) {
+function buildPreparedPlan(actions, profile, mediaInput, catalog) {
   validateProfile(profile, 'profile');
   if (!isObject(actions) || actions.schemaVersion !== 1) {
     fail('invalid_preparation_input', 'actions 必須是 schemaVersion 1');
@@ -336,7 +415,8 @@ function buildPreparedPlan(actions, profile, mediaInput) {
   if (!/^[0-9a-f]{64}$/i.test(actions.recipe.sha256 || '')) {
     fail('invalid_preparation_input', 'actions.recipe.sha256 必須是 SHA-256');
   }
-  requireString(actions.routeId, 'actions.routeId', 'invalid_preparation_input');
+  const routeId = requireString(actions.routeId, 'actions.routeId', 'invalid_preparation_input');
+  const routePolicy = resolveReviewedRoutePolicy(catalog, routeId);
   if (!Array.isArray(actions.planned) || !Array.isArray(actions.observed)) {
     fail('invalid_preparation_input', 'actions.planned/observed 必須是陣列');
   }
@@ -525,7 +605,8 @@ function buildPreparedPlan(actions, profile, mediaInput) {
         version: actions.recipe.version,
         sha256: actions.recipe.sha256,
       },
-      routeId: actions.routeId,
+      routeId,
+      routePolicy,
       recording: {
         encodedDurationMs,
         anchorSemantics,
@@ -590,5 +671,6 @@ module.exports = {
   buildPreparedPlan,
   canonicalDigest,
   getProfile,
+  resolveReviewedRoutePolicy,
   validateProfilesFile,
 };

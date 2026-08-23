@@ -328,7 +328,7 @@ function outputPaths(input, fsImpl = fs) {
   return { ...resolved, parent };
 }
 
-function validateSourceManifest(manifest, actions, hashes, sourceProbe, sourcePaths) {
+function validateSourceManifest(manifest, actions, hashes, sourceProbe, sourcePaths, routePolicy) {
   if (!manifest || manifest.schemaVersion !== 1) {
     fail('invalid_preparation_input', 'recording manifest 必須是 schemaVersion 1');
   }
@@ -349,6 +349,14 @@ function validateSourceManifest(manifest, actions, hashes, sourceProbe, sourcePa
   }
   if (manifest.recipe?.sha256 !== actions.recipe?.sha256) {
     fail('source_provenance_mismatch', 'recording manifest 的 recipe hash 不一致');
+  }
+  if (
+    manifest.route?.id !== actions.routeId ||
+    manifest.route?.sideEffectRisk !== routePolicy.sideEffectRisk ||
+    manifest.route?.requiresRootNavigation !== routePolicy.requiresRootNavigation ||
+    manifest.catalogVersion !== routePolicy.catalogVersion
+  ) {
+    fail('source_provenance_mismatch', 'recording manifest 的 reviewed route policy 不一致');
   }
   const manifestCalibration = manifest.recording?.timelineCalibration;
   if (
@@ -412,7 +420,7 @@ async function renderPrepared(input, deps = {}) {
     fail('invalid_output_path', 'prepared output 不可覆蓋 source artifacts');
   }
   const sourceProbe = await (deps.probeVideo || probeVideo)(rawPath);
-  const plan = buildPreparedPlan(actionsInput.value, input.profile, sourceProbe);
+  const plan = buildPreparedPlan(actionsInput.value, input.profile, sourceProbe, input.catalog);
   const hashes = {
     rawVideo: sha256File(rawPath, fsImpl),
     actions: sha256File(actionsInput.resolved, fsImpl),
@@ -424,6 +432,7 @@ async function renderPrepared(input, deps = {}) {
     hashes,
     sourceProbe,
     { rawVideo: rawPath, actions: actionsInput.resolved },
+    plan.source.routePolicy,
   );
 
   const tempDir = fsImpl.mkdtempSync(path.join(destinations.parent, '.prepared-mobile-clip-'));
@@ -477,6 +486,7 @@ async function renderPrepared(input, deps = {}) {
           file: path.basename(manifestInput.resolved),
           sha256: hashes.recordingManifest,
         },
+        routePolicy: plan.source.routePolicy,
         provenanceValidation: 'passed',
       },
       plan: {

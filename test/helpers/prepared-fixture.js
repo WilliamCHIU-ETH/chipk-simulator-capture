@@ -52,7 +52,7 @@ function fixtureActions() {
   return {
     schemaVersion: 1,
     recipe: { id: 'fixture.generic-interaction', version: 1, sha256: 'a'.repeat(64) },
-    routeId: 'chipk.fixture.route',
+    routeId: 'chipk.stock.kline',
     recording: {
       encodedDurationMs: 12000,
       anchorSemantics: 'fixture_process_boundary_not_first_video_frame',

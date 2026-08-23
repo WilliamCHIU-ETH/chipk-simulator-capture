@@ -16,6 +16,8 @@ readability.
 The planner accepts the current recording bundle only when all of these facts are present:
 
 - H.264 portrait raw video with positive, even dimensions and at most 30 seconds;
+- the current versioned reviewed provider catalog, with `actions.routeId` present and its route
+  policy fixed at `captureAllowed: true` plus `sideEffectRisk: none`;
 - actions schema v1 with `recording.encodedDurationMs` matching the media probe;
 - `timing.observedComplete: true`, no missing event IDs, and passed observed offsets inside the raw
   timeline;
@@ -38,16 +40,20 @@ would start while the previous action or overlay must remain stable, it fails as
 
 ## Deterministic plan and render
 
-`src/prepared-plan.js` is a pure compiler. Given the same parsed actions, media facts, and profile,
-it returns the same plan and canonical SHA-256 digest. The plan contains generated camera
-keyframes, projected interaction geometry, swipe direction, result evidence, and the upstream
-timing precision. It has no generated timestamp and no per-event-ID tuning.
+`src/prepared-plan.js` is a pure compiler. Given the same parsed actions, media facts, profile, and
+reviewed catalog, it returns the same plan and canonical SHA-256 digest. The plan contains
+generated camera keyframes, projected interaction geometry, swipe direction, result evidence,
+catalog version/canonical digest, route policy, and the upstream timing precision. It has no
+generated timestamp and no per-event-ID tuning.
 
 `src/prepared-renderer.js` uses local FFmpeg only after the plan passes. The single v0 profile:
 
 - preserves source dimensions, aspect ratio, and duration, and retains the source UI as the visual
   content while camera crop/scale/pan and interaction overlays change its presentation;
-- applies deterministic cosine camera moves from `zoomFocus`;
+- applies deterministic cosine camera moves from `zoomFocus`; profile zoom is the requested value,
+  while effective zoom is clamped when needed so the entire normalized focus width and height stay
+  visible, including focus regions aligned to a screen edge; each interaction records this as a
+  closed `zoomDecision` with requested, maximum focus-preserving, effective, and clamp fields;
 - shows a short expanding tap emphasis;
 - keeps an explicit long-press emphasis visible for its observed duration;
 - reveals ordered swipe trail samples from `touchPath`, preserving direction;
@@ -63,20 +69,25 @@ manual per-clip keyframes.
 
 ## Provenance and publication
 
-Render requires the current recording manifest hashes, artifact names, recipe identity, and media
-facts to match the raw video and actions. The three source artifacts and three prepared outputs
-must share one bundle directory, so provenance uses only relative file names and raw/actions remain
-beside the derived output. The renderer stages and probes the prepared video before atomically
-publishing three new files:
+Render requires the current recording manifest hashes, artifact names, recipe identity, route ID,
+catalog version, read-only route policy, and media facts to match the raw video, actions, and
+current reviewed catalog. An unknown, retired, capture-forbidden, side-effecting, or catalog-version
+mismatched route fails before any prepared artifact can receive `provenanceValidation: passed`.
+Because v0 does not accept an unversioned catalog snapshot from a recording bundle, an older
+catalog version intentionally requires a new current recording instead of silently reclassifying
+its route policy.
+The three source artifacts and three prepared outputs must share one bundle directory, so
+provenance uses only relative file names and raw/actions remain beside the derived output. The
+renderer stages and probes the prepared video before atomically publishing three new files:
 
 - `prepared.mp4`;
 - `prepared-plan.json`;
 - `preparation-provenance.json`.
 
-The provenance keeps raw/actions/recording-manifest hashes, the profile and plan hashes, output
-media facts, FFmpeg identity, and the render-filter hash. It records that preparation itself did
-not perform a fresh Simulator capture. Raw video and actions remain the reproducible inputs and
-are never deleted or rewritten.
+The provenance keeps raw/actions/recording-manifest hashes, reviewed route policy plus catalog
+version/digest, the profile and plan hashes, output media facts, FFmpeg identity, and the
+render-filter hash. It records that preparation itself did not perform a fresh Simulator capture.
+Raw video and actions remain the reproducible inputs and are never deleted or rewritten.
 
 ## Evidence and remaining gap
 

@@ -12,6 +12,7 @@ const {
   validateProfilesFile,
 } = require('../src/prepared-plan');
 const { probeVideo, renderPrepared } = require('../src/prepared-renderer');
+const { readCatalog } = require('./simulator-capture');
 
 const PROFILES_PATH = path.resolve(__dirname, '../config/presentation-profiles.experimental.json');
 
@@ -95,7 +96,12 @@ async function main(argv = process.argv.slice(2)) {
     required(values, ['raw', 'actions', 'profile']);
     const profile = getProfile(profiles, values.profile);
     const actions = readJson(values.actions, 'actions');
-    const plan = buildPreparedPlan(actions, profile, probeVideo(path.resolve(values.raw)));
+    const plan = buildPreparedPlan(
+      actions,
+      profile,
+      probeVideo(path.resolve(values.raw)),
+      readCatalog(),
+    );
     process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
     return;
   }
@@ -107,6 +113,7 @@ async function main(argv = process.argv.slice(2)) {
       actions: values.actions,
       recordingManifest: values['recording-manifest'],
       profile,
+      catalog: readCatalog(),
       video: values.video,
       plan: values.plan,
       manifest: values.manifest,

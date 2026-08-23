@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const profilesFile = require('../config/presentation-profiles.experimental.json');
+const { readCatalog } = require('../scripts/simulator-capture');
 const { buildPreparedPlan, getProfile, PreparationError } = require('../src/prepared-plan');
 const {
   buildFfmpegFilter,
@@ -15,6 +16,8 @@ const {
 } = require('../src/prepared-renderer');
 const { parseArgs } = require('../scripts/prepare-mobile-clip');
 const { fixtureActions, media } = require('./helpers/prepared-fixture');
+
+const reviewedCatalog = readCatalog();
 
 function tempDir(t) {
   const result = fs.mkdtempSync(path.join(os.tmpdir(), 'prepared-mobile-clip-test-'));
@@ -41,6 +44,14 @@ function sourceBundle(t) {
   writeJson(recordingManifest, {
     schemaVersion: 1,
     recipe: actionValue.recipe,
+    route: {
+      id: actionValue.routeId,
+      page: 'stock',
+      subpage: '2',
+      sideEffectRisk: 'none',
+      requiresRootNavigation: false,
+    },
+    catalogVersion: reviewedCatalog.catalogVersion,
     recording: {
       codec: media.codec,
       width: media.width,
@@ -59,7 +70,7 @@ function sourceBundle(t) {
 
 test('filter is deterministic and contains camera, tap, long-press, and swipe primitives', () => {
   const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
-  const plan = buildPreparedPlan(fixtureActions(), profile, media);
+  const plan = buildPreparedPlan(fixtureActions(), profile, media, reviewedCatalog);
   const first = buildFfmpegFilter(plan, profile);
   const second = buildFfmpegFilter(plan, profile);
   assert.equal(second, first);
@@ -90,6 +101,7 @@ test('renderer publishes prepared video, deterministic plan, and provenance atom
     actions: source.actions,
     recordingManifest: source.recordingManifest,
     profile,
+    catalog: reviewedCatalog,
     ...destinations,
   }, {
     clock: () => Date.parse('2030-01-02T03:04:05.000Z'),
@@ -106,6 +118,9 @@ test('renderer publishes prepared video, deterministic plan, and provenance atom
   const manifest = JSON.parse(fs.readFileSync(destinations.manifest, 'utf8'));
   assert.equal(manifest.captureDuringPreparation, false);
   assert.equal(manifest.source.provenanceValidation, 'passed');
+  assert.deepEqual(manifest.source.routePolicy, plan.source.routePolicy);
+  assert.equal(manifest.source.routePolicy.verdict, 'capture_allowed_read_only');
+  assert.equal(manifest.source.routePolicy.catalogVersion, reviewedCatalog.catalogVersion);
   assert.equal(manifest.source.rawVideo.sha256, digest(source.raw));
   assert.equal(manifest.source.actions.sha256, digest(source.actions));
   assert.equal(manifest.plan.canonicalSha256, plan.sha256);
@@ -141,6 +156,86 @@ test('renderer rejects provenance mismatch and publishes nothing', async (t) => 
       actions: source.actions,
       recordingManifest: source.recordingManifest,
       profile,
+      catalog: reviewedCatalog,
+      ...destinations,
+    }, { probeVideo: async () => media }),
+    { code: 'source_provenance_mismatch' },
+  );
+  assert.deepEqual(Object.values(destinations).map((filePath) => fs.existsSync(filePath)), [false, false, false]);
+});
+
+test('renderer rejects a self-consistent bundle for an unreviewed route and publishes nothing', async (t) => {
+  const source = sourceBundle(t);
+  const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
+  const actions = JSON.parse(fs.readFileSync(source.actions, 'utf8'));
+  actions.routeId = 'chipk.retired.route';
+  writeJson(source.actions, actions);
+  const sourceManifest = JSON.parse(fs.readFileSync(source.recordingManifest, 'utf8'));
+  sourceManifest.route.id = actions.routeId;
+  sourceManifest.artifacts.actions.sha256 = digest(source.actions);
+  writeJson(source.recordingManifest, sourceManifest);
+  const destinations = {
+    video: path.join(source.dir, 'unreviewed-video.mp4'),
+    plan: path.join(source.dir, 'unreviewed-plan.json'),
+    manifest: path.join(source.dir, 'unreviewed-provenance.json'),
+  };
+  await assert.rejects(
+    () => renderPrepared({
+      raw: source.raw,
+      actions: source.actions,
+      recordingManifest: source.recordingManifest,
+      profile,
+      catalog: reviewedCatalog,
+      ...destinations,
+    }, { probeVideo: async () => media }),
+    { code: 'unreviewed_route' },
+  );
+  assert.deepEqual(Object.values(destinations).map((filePath) => fs.existsSync(filePath)), [false, false, false]);
+});
+
+test('renderer rejects a recording catalog-version mismatch and publishes nothing', async (t) => {
+  const source = sourceBundle(t);
+  const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
+  const sourceManifest = JSON.parse(fs.readFileSync(source.recordingManifest, 'utf8'));
+  sourceManifest.catalogVersion = 'retired-catalog-version';
+  writeJson(source.recordingManifest, sourceManifest);
+  const destinations = {
+    video: path.join(source.dir, 'catalog-mismatch-video.mp4'),
+    plan: path.join(source.dir, 'catalog-mismatch-plan.json'),
+    manifest: path.join(source.dir, 'catalog-mismatch-provenance.json'),
+  };
+  await assert.rejects(
+    () => renderPrepared({
+      raw: source.raw,
+      actions: source.actions,
+      recordingManifest: source.recordingManifest,
+      profile,
+      catalog: reviewedCatalog,
+      ...destinations,
+    }, { probeVideo: async () => media }),
+    { code: 'source_provenance_mismatch' },
+  );
+  assert.deepEqual(Object.values(destinations).map((filePath) => fs.existsSync(filePath)), [false, false, false]);
+});
+
+test('renderer rejects a recording root-navigation policy mismatch and publishes nothing', async (t) => {
+  const source = sourceBundle(t);
+  const profile = getProfile(profilesFile, 'chipk.full-phone-portrait.v0');
+  const sourceManifest = JSON.parse(fs.readFileSync(source.recordingManifest, 'utf8'));
+  sourceManifest.route.requiresRootNavigation = true;
+  writeJson(source.recordingManifest, sourceManifest);
+  const destinations = {
+    video: path.join(source.dir, 'root-policy-video.mp4'),
+    plan: path.join(source.dir, 'root-policy-plan.json'),
+    manifest: path.join(source.dir, 'root-policy-provenance.json'),
+  };
+  await assert.rejects(
+    () => renderPrepared({
+      raw: source.raw,
+      actions: source.actions,
+      recordingManifest: source.recordingManifest,
+      profile,
+      catalog: reviewedCatalog,
       ...destinations,
     }, { probeVideo: async () => media }),
     { code: 'source_provenance_mismatch' },
@@ -158,6 +253,7 @@ test('renderer keeps raw, actions, evidence, and prepared outputs in one bundle 
       actions: source.actions,
       recordingManifest: source.recordingManifest,
       profile,
+      catalog: reviewedCatalog,
       video: path.join(other, 'prepared.mp4'),
       plan: path.join(other, 'prepared-plan.json'),
       manifest: path.join(other, 'prepared-provenance.json'),
@@ -180,6 +276,7 @@ test('renderer failure leaves no partial final bundle', async (t) => {
       actions: source.actions,
       recordingManifest: source.recordingManifest,
       profile,
+      catalog: reviewedCatalog,
       ...destinations,
     }, {
       probeVideo: async () => media,
@@ -196,4 +293,5 @@ test('renderer failure leaves no partial final bundle', async (t) => {
 test('experimental CLI parser rejects undeclared flags and keeps stable CLI untouched', () => {
   assert.deepEqual(parseArgs(['profile-check', '--json']).values.json, true);
   assert.throws(() => parseArgs(['render', '--udid', 'fixture']), { code: 'unknown_flag' });
+  assert.throws(() => parseArgs(['render', '--catalog', 'fixture']), { code: 'unknown_flag' });
 });
