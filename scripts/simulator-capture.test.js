@@ -591,6 +591,16 @@ test('OCR 驗證忽略空白與標點，但要求所有 expectedTexts', () => {
   assert.deepEqual(matchedExpectedTexts([{ text: '台積電' }], ['台積電', '健檢']).missing, ['健檢']);
 });
 
+test('default/PSM6 OCR 每個 expected text 只在單一 line 內匹配', () => {
+  const negative = ocrGeometryFixture.cases.find(
+    (fixture) => fixture.id === 'wrong-tab-fragments-in-adjacent-columns',
+  );
+  assert.deepEqual(
+    matchedExpectedTexts(negative.sparseLines, negative.expectedTexts),
+    { matched: [], missing: negative.expectedTexts },
+  );
+});
+
 test('sparse OCR 只串接同欄垂直相鄰 fragments，不跨相鄰欄誤判', () => {
   for (const fixture of ocrGeometryFixture.cases) {
     const match = matchedSparseExpectedTexts(fixture.sparseLines, fixture.expectedTexts);
@@ -601,15 +611,6 @@ test('sparse OCR 只串接同欄垂直相鄰 fragments，不跨相鄰欄誤判',
       fixture.id,
     );
   }
-
-  const negative = ocrGeometryFixture.cases.find(
-    (fixture) => fixture.id === 'wrong-tab-fragments-in-adjacent-columns',
-  );
-  assert.deepEqual(
-    matchedExpectedTexts(negative.sparseLines, negative.expectedTexts).matched,
-    negative.expectedTexts,
-    'flat global matching would join the adjacent columns and demonstrates the false-pass boundary',
-  );
 });
 
 test('capture 在 default OCR 已命中時不執行任何 fallback', async (t) => {
@@ -743,6 +744,63 @@ test('capture 的 PSM11 adjacent-column fragments 不得通過且零發布', asy
   ]);
   assert.equal(fs.existsSync(output), false);
   assert.equal(fs.existsSync(manifest), false);
+});
+
+test('capture 的 default/PSM6 adjacent-column fragments 不得通過且零發布', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-dense-negative-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const negative = ocrGeometryFixture.cases.find(
+    (fixture) => fixture.id === 'wrong-tab-fragments-in-adjacent-columns',
+  );
+
+  for (const stage of ['default', 'psm6']) {
+    const output = path.join(tempDir, `${stage}.png`);
+    const manifest = path.join(tempDir, `${stage}.json`);
+    const ocrCalls = [];
+    const clockValues = [0, 0, 2000];
+
+    await assert.rejects(
+      () => captureRoute(
+        featuredFixtureCatalog(),
+        {
+          route: 'featured-main-force',
+          mode: 'test',
+          udid,
+          output,
+          manifest,
+          timeoutMs: 1000,
+          pollMs: 250,
+          confirmVipSession: true,
+        },
+        {
+          exec: syntheticCaptureExec(udid),
+          ocrLines: (_file, lang, options) => {
+            ocrCalls.push({ lang, options });
+            if (options?.psm === 11) return [];
+            if (stage === 'default' && options === undefined) {
+              return [{ text: '精選' }, ...negative.sparseLines];
+            }
+            if (stage === 'psm6' && options?.psm === 6) return negative.sparseLines;
+            return [{ text: '精選' }];
+          },
+          sleep: async () => {},
+          clock: () => clockValues.shift() ?? 2000,
+          now: () => new Date(2026, 7, 19),
+        },
+      ),
+      (error) => error instanceof CliError && error.code === 'expected_text_timeout',
+      stage,
+    );
+
+    assert.deepEqual(ocrCalls, [
+      { lang: 'chi_tra', options: undefined },
+      { lang: 'chi_tra', options: { psm: 6 } },
+      { lang: 'chi_tra', options: { psm: 11 } },
+    ], stage);
+    assert.equal(fs.existsSync(output), false, stage);
+    assert.equal(fs.existsSync(manifest), false, stage);
+  }
 });
 
 test('capture 只在 OCR 通過後寫入 PNG 與不含 token 的 manifest', async (t) => {

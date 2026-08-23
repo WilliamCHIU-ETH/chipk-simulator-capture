@@ -717,8 +717,14 @@ function getSourceVersion(catalog) {
 }
 
 function matchedExpectedTexts(lines, expectedTexts) {
-  const haystack = normalizeForMatch(lines.map((line) => line.text).join('\n'));
-  const matched = expectedTexts.filter((text) => haystack.includes(normalizeForMatch(text)));
+  // Default and PSM6 may normalize words already grouped into one OCR line, but must never
+  // manufacture a match by flattening separate rows or columns. Wrapped text belongs to the
+  // geometry-aware PSM11 fallback below.
+  const candidates = lines.map((line) => normalizeForMatch(line?.text)).filter(Boolean);
+  const matched = expectedTexts.filter((text) => {
+    const expected = normalizeForMatch(text);
+    return expected && candidates.some((candidate) => candidate.includes(expected));
+  });
   return { matched, missing: expectedTexts.filter((text) => !matched.includes(text)) };
 }
 
