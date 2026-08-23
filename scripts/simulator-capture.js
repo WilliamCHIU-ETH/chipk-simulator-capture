@@ -722,6 +722,98 @@ function matchedExpectedTexts(lines, expectedTexts) {
   return { matched, missing: expectedTexts.filter((text) => !matched.includes(text)) };
 }
 
+const SPARSE_OCR_MAX_CHAIN_LINES = 3;
+const SPARSE_OCR_MAX_VERTICAL_GAP_HEIGHTS = 1.5;
+const SPARSE_OCR_MIN_HORIZONTAL_OVERLAP = 0.5;
+const SPARSE_OCR_SPATIAL_STRATEGY = 'same_column_vertical_adjacency_v1';
+
+function sparseLineGeometry(line) {
+  const values = ['x', 'y', 'w', 'h'].map((key) => Number(line?.[key]));
+  if (values.some((value) => !Number.isFinite(value))) return null;
+  const [x, y, w, h] = values;
+  if (w <= 0 || h <= 0) return null;
+  return { x, y, w, h };
+}
+
+function horizontalOverlapRatio(first, second) {
+  const overlap = Math.max(
+    0,
+    Math.min(first.x + first.w, second.x + second.w) - Math.max(first.x, second.x),
+  );
+  return overlap / Math.min(first.w, second.w);
+}
+
+function isNextSparseLine(first, second) {
+  const firstBox = sparseLineGeometry(first);
+  const secondBox = sparseLineGeometry(second);
+  if (!firstBox || !secondBox) return false;
+  const firstCenterY = firstBox.y + firstBox.h / 2;
+  const secondCenterY = secondBox.y + secondBox.h / 2;
+  if (secondCenterY <= firstCenterY) return false;
+  if (horizontalOverlapRatio(firstBox, secondBox) < SPARSE_OCR_MIN_HORIZONTAL_OVERLAP) {
+    return false;
+  }
+  const verticalGap = secondBox.y - (firstBox.y + firstBox.h);
+  const maxAllowedGap = Math.max(firstBox.h, secondBox.h)
+    * SPARSE_OCR_MAX_VERTICAL_GAP_HEIGHTS;
+  return verticalGap >= 0 && verticalGap <= maxAllowedGap;
+}
+
+function sparseTextCandidates(lines) {
+  // PSM11 intentionally keeps fragments sparse. Only build short downward chains that retain
+  // strong column overlap; never flatten the whole screen into one matchable string.
+  const ordered = lines
+    .map((line, index) => ({ ...line, index, text: String(line?.text || '') }))
+    .filter((line) => normalizeForMatch(line.text))
+    .sort((first, second) => {
+      const firstBox = sparseLineGeometry(first);
+      const secondBox = sparseLineGeometry(second);
+      if (!firstBox && !secondBox) return first.index - second.index;
+      if (!firstBox) return 1;
+      if (!secondBox) return -1;
+      return firstBox.y - secondBox.y || firstBox.x - secondBox.x || first.index - second.index;
+    });
+  const candidates = new Set(ordered.map((line) => line.text));
+
+  for (const start of ordered) {
+    if (!sparseLineGeometry(start)) continue;
+    let current = start;
+    let combined = start.text;
+    for (let depth = 1; depth < SPARSE_OCR_MAX_CHAIN_LINES; depth += 1) {
+      const next = ordered
+        .filter((candidate) => candidate.index !== current.index && isNextSparseLine(current, candidate))
+        .sort((first, second) => {
+          const firstBox = sparseLineGeometry(first);
+          const secondBox = sparseLineGeometry(second);
+          const currentBox = sparseLineGeometry(current);
+          const firstGap = firstBox.y - (currentBox.y + currentBox.h);
+          const secondGap = secondBox.y - (currentBox.y + currentBox.h);
+          return firstGap - secondGap || firstBox.x - secondBox.x || first.index - second.index;
+        })[0];
+      if (!next) break;
+      combined += next.text;
+      candidates.add(combined);
+      current = next;
+    }
+  }
+  return [...candidates];
+}
+
+function matchedSparseExpectedTexts(lines, expectedTexts) {
+  const candidates = sparseTextCandidates(lines).map(normalizeForMatch);
+  const matched = expectedTexts.filter((text) => {
+    const expected = normalizeForMatch(text);
+    return expected && candidates.some((candidate) => candidate.includes(expected));
+  });
+  return { matched, missing: expectedTexts.filter((text) => !matched.includes(text)) };
+}
+
+function mergeExpectedTextMatches(expectedTexts, ...matches) {
+  const observed = new Set(matches.flatMap((match) => match.matched));
+  const matched = expectedTexts.filter((text) => observed.has(text));
+  return { matched, missing: expectedTexts.filter((text) => !observed.has(text)) };
+}
+
 function sha256(filePath) {
   const hash = crypto.createHash('sha256');
   hash.update(fs.readFileSync(filePath));
@@ -780,20 +872,38 @@ async function captureRoute(catalog, input, deps = {}) {
   const wait = deps.sleep || sleep;
   const clock = deps.clock || Date.now;
   const started = clock();
+  const ocrModesTried = new Set();
+  let ocrCallCount = 0;
+  let pollAttemptCount = 0;
   let result;
   try {
     exec('xcrun', ['simctl', 'openurl', input.udid, plan.url]);
     while (clock() - started <= timeoutMs) {
+      pollAttemptCount += 1;
       exec('xcrun', ['simctl', 'io', input.udid, 'screenshot', tempScreenshot]);
+      ocrModesTried.add('default');
+      ocrCallCount += 1;
+      let resolvedBy = 'default';
       let lines = ocr(tempScreenshot, 'chi_tra');
       let match = matchedExpectedTexts(lines, plan.expectedTexts);
       if (match.missing.length > 0) {
+        ocrModesTried.add('psm6');
+        ocrCallCount += 1;
+        resolvedBy = 'psm6';
         lines = [...lines, ...ocr(tempScreenshot, 'chi_tra', { psm: 6 })];
         match = matchedExpectedTexts(lines, plan.expectedTexts);
       }
+      if (match.missing.length > 0) {
+        ocrModesTried.add('psm11');
+        ocrCallCount += 1;
+        resolvedBy = 'psm11_spatial';
+        const sparseLines = ocr(tempScreenshot, 'chi_tra', { psm: 11 });
+        const sparseMatch = matchedSparseExpectedTexts(sparseLines, match.missing);
+        match = mergeExpectedTextMatches(plan.expectedTexts, match, sparseMatch);
+      }
       if (match.missing.length === 0) {
         const contentMatch = matchedExpectedTexts(lines, plan.contentTexts);
-        result = { match, contentMatch, elapsedMs: clock() - started };
+        result = { match, contentMatch, elapsedMs: clock() - started, resolvedBy };
         break;
       }
       await wait(pollMs);
@@ -830,6 +940,14 @@ async function captureRoute(catalog, input, deps = {}) {
           expected: plan.contentTexts,
           observed: result.contentMatch.matched,
           missing: result.contentMatch.missing,
+        },
+        ocrReadiness: {
+          modesTried: [...ocrModesTried],
+          sparseFallbackAttempted: ocrModesTried.has('psm11'),
+          spatialStrategy: ocrModesTried.has('psm11') ? SPARSE_OCR_SPATIAL_STRATEGY : null,
+          resolvedBy: result.resolvedBy,
+          pollAttemptCount,
+          ocrCallCount,
         },
         elapsedMs: result.elapsedMs,
       },
@@ -1020,6 +1138,7 @@ module.exports = {
   getSourceVersion,
   localDate,
   matchedExpectedTexts,
+  matchedSparseExpectedTexts,
   normalizeForMatch,
   parseArgs,
   readCatalog,

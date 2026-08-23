@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "kind": "hand-authored-synthetic-ocr-geometry",
+  "cases": [
+    {
+      "id": "wrapped-target-with-adjacent-column",
+      "expectedTexts": ["主力狂收噴發"],
+      "sparseLines": [
+        { "text": "主力狂收", "x": 24, "y": 400, "w": 150, "h": 35 },
+        { "text": "產業龍頭", "x": 226, "y": 417, "w": 140, "h": 34 },
+        { "text": "噴發", "x": 63, "y": 447, "w": 72, "h": 35 }
+      ],
+      "expectedMatched": ["主力狂收噴發"]
+    },
+    {
+      "id": "wrong-tab-fragments-in-adjacent-columns",
+      "expectedTexts": ["主力狂收噴發"],
+      "sparseLines": [
+        { "text": "主力狂收", "x": 24, "y": 400, "w": 150, "h": 35 },
+        { "text": "噴發", "x": 226, "y": 417, "w": 72, "h": 35 }
+      ],
+      "expectedMatched": []
+    },
+    {
+      "id": "wrong-tab-fragments-too-far-apart",
+      "expectedTexts": ["主力狂收噴發"],
+      "sparseLines": [
+        { "text": "主力狂收", "x": 24, "y": 400, "w": 150, "h": 35 },
+        { "text": "噴發", "x": 63, "y": 560, "w": 72, "h": 35 }
+      ],
+      "expectedMatched": []
+    }
+  ]
+}

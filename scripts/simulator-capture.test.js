@@ -13,12 +13,14 @@ const {
   exactSimulator,
   getSourceVersion,
   matchedExpectedTexts,
+  matchedSparseExpectedTexts,
   parseArgs,
   readCatalog,
   resolveStock,
   suggestRoutes,
   validateCatalog,
 } = require('./simulator-capture');
+const ocrGeometryFixture = require('../fixtures/synthetic/ocr-readiness-geometry.json');
 
 function fixtureCatalog() {
   return {
@@ -68,6 +70,40 @@ function fixtureCatalog() {
       },
     ],
   };
+}
+
+function syntheticCaptureExec(udid) {
+  return (file, args) => {
+    if (file === 'xcrun' && args[1] === 'list') {
+      return JSON.stringify({
+        devices: { runtime: [{ udid, name: 'iPhone Test', state: 'Booted', isAvailable: true }] },
+      });
+    }
+    if (file === 'xcrun' && args[1] === 'get_app_container') return '/tmp/FakeChipK.app';
+    if (file === 'plutil') return args[1] === 'CFBundleVersion' ? '100' : '10.0.0';
+    if (file === 'tesseract') return 'List of available languages (1):\nchi_tra';
+    if (file === 'xcrun' && args[1] === 'openurl') return '';
+    if (file === 'xcrun' && args[1] === 'io') {
+      fs.writeFileSync(args[4], 'synthetic-png-bytes');
+      return '';
+    }
+    throw new Error(`unexpected command: ${file} ${args.join(' ')}`);
+  };
+}
+
+function featuredFixtureCatalog() {
+  const catalog = fixtureCatalog();
+  Object.assign(catalog.routes[0], {
+    id: 'featured-main-force',
+    page: 'select',
+    subpage: 3,
+    name: '精選主力策略',
+    requiredParams: [],
+    optionalParams: [],
+    expectedTexts: ['精選', '主力狂收噴發'],
+    contentTexts: [],
+  });
+  return catalog;
 }
 
 test('catalog schema 接受固定 ChipK target 與完整 route 欄位', () => {
@@ -553,6 +589,160 @@ test('OCR 驗證忽略空白與標點，但要求所有 expectedTexts', () => {
   );
   assert.deepEqual(match, { matched: ['台積電', '健檢'], missing: [] });
   assert.deepEqual(matchedExpectedTexts([{ text: '台積電' }], ['台積電', '健檢']).missing, ['健檢']);
+});
+
+test('sparse OCR 只串接同欄垂直相鄰 fragments，不跨相鄰欄誤判', () => {
+  for (const fixture of ocrGeometryFixture.cases) {
+    const match = matchedSparseExpectedTexts(fixture.sparseLines, fixture.expectedTexts);
+    assert.deepEqual(match.matched, fixture.expectedMatched, fixture.id);
+    assert.deepEqual(
+      match.missing,
+      fixture.expectedTexts.filter((text) => !fixture.expectedMatched.includes(text)),
+      fixture.id,
+    );
+  }
+
+  const negative = ocrGeometryFixture.cases.find(
+    (fixture) => fixture.id === 'wrong-tab-fragments-in-adjacent-columns',
+  );
+  assert.deepEqual(
+    matchedExpectedTexts(negative.sparseLines, negative.expectedTexts).matched,
+    negative.expectedTexts,
+    'flat global matching would join the adjacent columns and demonstrates the false-pass boundary',
+  );
+});
+
+test('capture 在 default OCR 已命中時不執行任何 fallback', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-default-ocr-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const ocrCalls = [];
+
+  const result = await captureRoute(
+    fixtureCatalog(),
+    {
+      route: 'stock-health-check',
+      mode: 'test',
+      stockId: '2330',
+      stockName: '台積電',
+      udid,
+      output: path.join(tempDir, 'capture.png'),
+      manifest: path.join(tempDir, 'capture.json'),
+      confirmVipSession: true,
+    },
+    {
+      exec: syntheticCaptureExec(udid),
+      ocrLines: (_file, lang, options) => {
+        ocrCalls.push({ lang, options });
+        return [{ text: '綜合健檢 2330' }];
+      },
+      now: () => new Date(2026, 7, 19),
+    },
+  );
+
+  assert.deepEqual(ocrCalls, [{ lang: 'chi_tra', options: undefined }]);
+  assert.deepEqual(result.verification.ocrReadiness, {
+    modesTried: ['default'],
+    sparseFallbackAttempted: false,
+    spatialStrategy: null,
+    resolvedBy: 'default',
+    pollAttemptCount: 1,
+    ocrCallCount: 1,
+  });
+});
+
+test('capture 只在 default 與 PSM6 都 miss 時使用 PSM11 spatial fallback', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-sparse-ocr-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const ocrCalls = [];
+  const catalog = featuredFixtureCatalog();
+  const positive = ocrGeometryFixture.cases.find(
+    (fixture) => fixture.id === 'wrapped-target-with-adjacent-column',
+  );
+
+  const result = await captureRoute(
+    catalog,
+    {
+      route: 'featured-main-force',
+      mode: 'test',
+      udid,
+      output: path.join(tempDir, 'capture.png'),
+      manifest: path.join(tempDir, 'capture.json'),
+      confirmVipSession: true,
+    },
+    {
+      exec: syntheticCaptureExec(udid),
+      ocrLines: (_file, lang, options) => {
+        ocrCalls.push({ lang, options });
+        return options?.psm === 11 ? positive.sparseLines : [{ text: '精選' }];
+      },
+      now: () => new Date(2026, 7, 19),
+    },
+  );
+
+  assert.deepEqual(ocrCalls, [
+    { lang: 'chi_tra', options: undefined },
+    { lang: 'chi_tra', options: { psm: 6 } },
+    { lang: 'chi_tra', options: { psm: 11 } },
+  ]);
+  assert.deepEqual(result.verification.matchedTexts, ['精選', '主力狂收噴發']);
+  assert.deepEqual(result.verification.ocrReadiness, {
+    modesTried: ['default', 'psm6', 'psm11'],
+    sparseFallbackAttempted: true,
+    spatialStrategy: 'same_column_vertical_adjacency_v1',
+    resolvedBy: 'psm11_spatial',
+    pollAttemptCount: 1,
+    ocrCallCount: 3,
+  });
+});
+
+test('capture 的 PSM11 adjacent-column fragments 不得通過且零發布', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-sparse-negative-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const output = path.join(tempDir, 'capture.png');
+  const manifest = path.join(tempDir, 'capture.json');
+  const ocrCalls = [];
+  const clockValues = [0, 0, 2000];
+  const negative = ocrGeometryFixture.cases.find(
+    (fixture) => fixture.id === 'wrong-tab-fragments-in-adjacent-columns',
+  );
+
+  await assert.rejects(
+    () => captureRoute(
+      featuredFixtureCatalog(),
+      {
+        route: 'featured-main-force',
+        mode: 'test',
+        udid,
+        output,
+        manifest,
+        timeoutMs: 1000,
+        pollMs: 250,
+        confirmVipSession: true,
+      },
+      {
+        exec: syntheticCaptureExec(udid),
+        ocrLines: (_file, lang, options) => {
+          ocrCalls.push({ lang, options });
+          return options?.psm === 11 ? negative.sparseLines : [{ text: '精選' }];
+        },
+        sleep: async () => {},
+        clock: () => clockValues.shift() ?? 2000,
+        now: () => new Date(2026, 7, 19),
+      },
+    ),
+    (error) => error instanceof CliError && error.code === 'expected_text_timeout',
+  );
+
+  assert.deepEqual(ocrCalls, [
+    { lang: 'chi_tra', options: undefined },
+    { lang: 'chi_tra', options: { psm: 6 } },
+    { lang: 'chi_tra', options: { psm: 11 } },
+  ]);
+  assert.equal(fs.existsSync(output), false);
+  assert.equal(fs.existsSync(manifest), false);
 });
 
 test('capture 只在 OCR 通過後寫入 PNG 與不含 token 的 manifest', async (t) => {
