@@ -1,6 +1,6 @@
 # Provider source coverage
 
-`npm run coverage:source` emits deterministic JSON from the reviewed route catalog and recording
+`npm run --silent coverage:source` emits deterministic JSON from the reviewed route catalog and recording
 recipes. It is a provider-local diagnostic, not a third command on the Marketing Video Port.
 
 The report keeps five claims separate:
@@ -30,7 +30,7 @@ such population.
 Run:
 
 ```bash
-npm run coverage:source
+npm run --silent coverage:source
 ```
 
 Important JSON fields:

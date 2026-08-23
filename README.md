@@ -130,8 +130,8 @@ node scripts/simulator-capture.js plan --route chipk.stock.health-check --stock-
 node scripts/simulator-capture.js preflight --udid <EXACT-UDID> --json
 node scripts/simulator-record.js recipe-check --json
 node scripts/simulator-record.js plan --recipe renbao.kline-tab-switch-benchmark --json
-npm run coverage:source
-npm run release:gate:v0.2.1
+npm run --silent coverage:source
+npm run --silent release:gate:v0.2.1
 ```
 
 The coverage and release commands are provider-local source diagnostics. They do not add commands

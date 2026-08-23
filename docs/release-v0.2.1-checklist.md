@@ -72,20 +72,20 @@ outcomes, and verify both commit identities independently.
 Generate the source-only coverage report:
 
 ```bash
-npm run coverage:source
+npm run --silent coverage:source
 ```
 
 Inspect current blockers without supplying release attestation evidence:
 
 ```bash
-npm run release:gate:v0.2.1
+npm run --silent release:gate:v0.2.1
 ```
 
 After P0 regression, provider preflight, release identity, and cross-repo final-commit checks are
 complete:
 
 ```bash
-npm run release:gate:v0.2.1 -- \
+npm run --silent release:gate:v0.2.1 -- \
   --evidence "$PWD/.runtime/release-v0.2.1-evidence.json"
 ```
 
