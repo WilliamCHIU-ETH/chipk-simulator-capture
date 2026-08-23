@@ -716,11 +716,72 @@ function getSourceVersion(catalog) {
   return `sha256:${digest}`;
 }
 
+const DENSE_OCR_MAX_HORIZONTAL_GAP_HEIGHTS = 0.75;
+const DENSE_OCR_MIN_VERTICAL_OVERLAP = 0.5;
+
+function denseWordGeometry(word) {
+  const text = String(word?.t ?? '');
+  const values = ['x', 'y', 'w', 'h'].map((key) => Number(word?.[key]));
+  if (text.trim() === '' || values.some((value) => !Number.isFinite(value))) return null;
+  const [x, y, w, h] = values;
+  if (w <= 0 || h <= 0) return null;
+  return { text, x, y, w, h };
+}
+
+function denseWordsShareRow(first, second) {
+  const overlap = Math.max(
+    0,
+    Math.min(first.y + first.h, second.y + second.h) - Math.max(first.y, second.y),
+  );
+  return overlap / Math.min(first.h, second.h) >= DENSE_OCR_MIN_VERTICAL_OVERLAP;
+}
+
+function denseWordsAreContiguous(first, second) {
+  if (!denseWordsShareRow(first, second)) return false;
+  const horizontalGap = second.x - (first.x + first.w);
+  const maxHorizontalGap = Math.max(first.h, second.h)
+    * DENSE_OCR_MAX_HORIZONTAL_GAP_HEIGHTS;
+  return horizontalGap <= maxHorizontalGap;
+}
+
+function denseTextCandidates(line) {
+  // Hand-authored tests may opt into text-only input explicitly. Runtime OCR always supplies
+  // word boxes; missing or malformed production geometry must fail closed.
+  if (line?.synthetic === true && line.words === undefined) {
+    return normalizeForMatch(line.text) ? [String(line.text)] : [];
+  }
+  if (!Array.isArray(line?.words) || line.words.length === 0) return [];
+  const words = line.words.map(denseWordGeometry);
+  if (words.some((word) => word === null)) return [];
+  words.sort((first, second) => first.x - second.x || first.y - second.y);
+
+  const clusters = [];
+  let cluster = [words[0]];
+  for (const word of words.slice(1)) {
+    const previous = cluster[cluster.length - 1];
+    const clusterStart = cluster[0];
+    if (
+      denseWordsAreContiguous(previous, word) &&
+      denseWordsShareRow(clusterStart, word)
+    ) {
+      cluster.push(word);
+    } else {
+      clusters.push(cluster);
+      cluster = [word];
+    }
+  }
+  clusters.push(cluster);
+  return clusters.map((items) => items.map((word) => word.text).join(''));
+}
+
 function matchedExpectedTexts(lines, expectedTexts) {
-  // Default and PSM6 may normalize words already grouped into one OCR line, but must never
-  // manufacture a match by flattening separate rows or columns. Wrapped text belongs to the
-  // geometry-aware PSM11 fallback below.
-  const candidates = lines.map((line) => normalizeForMatch(line?.text)).filter(Boolean);
+  // Default and PSM6 may group horizontally separated columns into one TSV line. Only exact
+  // normalized substrings inside a contiguous same-row word cluster are eligible. Wrapped text
+  // belongs to the geometry-aware PSM11 fallback below.
+  const candidates = lines
+    .flatMap(denseTextCandidates)
+    .map(normalizeForMatch)
+    .filter(Boolean);
   const matched = expectedTexts.filter((text) => {
     const expected = normalizeForMatch(text);
     return expected && candidates.some((candidate) => candidate.includes(expected));

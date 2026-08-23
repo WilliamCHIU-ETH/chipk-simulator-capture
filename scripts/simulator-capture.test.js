@@ -91,6 +91,25 @@ function syntheticCaptureExec(udid) {
   };
 }
 
+function syntheticOcrLine(text) {
+  return { text, synthetic: true };
+}
+
+function geometryOcrLine(words) {
+  const x0 = Math.min(...words.map((word) => word.x));
+  const y0 = Math.min(...words.map((word) => word.y));
+  const x1 = Math.max(...words.map((word) => word.x + word.w));
+  const y1 = Math.max(...words.map((word) => word.y + word.h));
+  return {
+    text: words.map((word) => word.t).join(''),
+    words,
+    x: x0,
+    y: y0,
+    w: x1 - x0,
+    h: y1 - y0,
+  };
+}
+
 function featuredFixtureCatalog() {
   const catalog = fixtureCatalog();
   Object.assign(catalog.routes[0], {
@@ -489,11 +508,17 @@ test('股票名稱 OCR 誤字不阻擋 route label + exact ID readiness', () => 
   assert.deepEqual(plan.expectedTexts, ['主力', '2324']);
   assert.deepEqual(plan.contentTexts, ['仁寶']);
   assert.deepEqual(
-    matchedExpectedTexts([{ text: '仁賣 2324' }, { text: '主力進出' }], plan.expectedTexts),
+    matchedExpectedTexts(
+      [syntheticOcrLine('仁賣 2324'), syntheticOcrLine('主力進出')],
+      plan.expectedTexts,
+    ),
     { matched: ['主力', '2324'], missing: [] },
   );
   assert.deepEqual(
-    matchedExpectedTexts([{ text: '仁賣 2324' }, { text: '主力進出' }], plan.contentTexts),
+    matchedExpectedTexts(
+      [syntheticOcrLine('仁賣 2324'), syntheticOcrLine('主力進出')],
+      plan.contentTexts,
+    ),
     { matched: [], missing: ['仁寶'] },
   );
 });
@@ -584,11 +609,47 @@ test('preflight device resolution 必須 exact UDID，不任取 booted device', 
 
 test('OCR 驗證忽略空白與標點，但要求所有 expectedTexts', () => {
   const match = matchedExpectedTexts(
-    [{ text: '台 積 電（2330）' }, { text: '綜合 健檢' }],
+    [syntheticOcrLine('台 積 電（2330）'), syntheticOcrLine('綜合 健檢')],
     ['台積電', '健檢'],
   );
   assert.deepEqual(match, { matched: ['台積電', '健檢'], missing: [] });
-  assert.deepEqual(matchedExpectedTexts([{ text: '台積電' }], ['台積電', '健檢']).missing, ['健檢']);
+  assert.deepEqual(
+    matchedExpectedTexts([syntheticOcrLine('台積電')], ['台積電', '健檢']).missing,
+    ['健檢'],
+  );
+});
+
+test('default/PSM6 OCR 只匹配有 geometry 的同列連續 word clusters', () => {
+  const contiguous = geometryOcrLine([
+    { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
+    { t: '噴發', x: 181, y: 402, w: 72, h: 33 },
+  ]);
+  const oneWord = geometryOcrLine([
+    { t: '精選', x: 24, y: 300, w: 72, h: 35 },
+  ]);
+  const adjacentColumns = geometryOcrLine([
+    { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
+    { t: '噴發', x: 260, y: 402, w: 72, h: 33 },
+  ]);
+
+  assert.deepEqual(
+    matchedExpectedTexts([contiguous, oneWord], ['精選', '主力狂收噴發']),
+    { matched: ['精選', '主力狂收噴發'], missing: [] },
+  );
+  assert.deepEqual(
+    matchedExpectedTexts([adjacentColumns], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+  assert.deepEqual(
+    matchedExpectedTexts([{ text: '主力狂收噴發' }], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+  assert.deepEqual(
+    matchedExpectedTexts([
+      { text: '主力狂收噴發', words: [{ t: '主力狂收噴發', x: 24, y: 400, w: 0, h: 35 }] },
+    ], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
 });
 
 test('default/PSM6 OCR 每個 expected text 只在單一 line 內匹配', () => {
@@ -596,7 +657,10 @@ test('default/PSM6 OCR 每個 expected text 只在單一 line 內匹配', () => 
     (fixture) => fixture.id === 'wrong-tab-fragments-in-adjacent-columns',
   );
   assert.deepEqual(
-    matchedExpectedTexts(negative.sparseLines, negative.expectedTexts),
+    matchedExpectedTexts(
+      negative.sparseLines.map((line) => ({ ...line, synthetic: true })),
+      negative.expectedTexts,
+    ),
     { matched: [], missing: negative.expectedTexts },
   );
 });
@@ -644,7 +708,7 @@ test('capture 在 default OCR 已命中時不執行任何 fallback', async (t) =
       exec: syntheticCaptureExec(udid),
       ocrLines: (_file, lang, options) => {
         ocrCalls.push({ lang, options });
-        return [{ text: '綜合健檢 2330 綜合評語 交易屬性健診 台積電' }];
+        return [syntheticOcrLine('綜合健檢 2330 綜合評語 交易屬性健診 台積電')];
       },
       now: () => new Date(2026, 7, 19),
     },
@@ -686,7 +750,7 @@ test('capture 單次 PSM11 驗 wrapped readiness/content 且拒絕 adjacent-colu
       exec: syntheticCaptureExec(udid),
       ocrLines: (_file, lang, options) => {
         ocrCalls.push({ lang, options });
-        return options?.psm === 11 ? positive.sparseLines : [{ text: '精選' }];
+        return options?.psm === 11 ? positive.sparseLines : [syntheticOcrLine('精選')];
       },
       now: () => new Date(2026, 7, 19),
     },
@@ -744,12 +808,12 @@ test('capture readiness 由 default/PSM6 解決時只補一次 PSM11 content fal
         ocrLines: (_file, lang, options) => {
           ocrCalls.push({ lang, options });
           if (options?.psm === 11) return positive.sparseLines;
-          if (options?.psm === 6) return [{ text: '2330' }];
-          return [{
-            text: readinessStage === 'default'
+          if (options?.psm === 6) return [syntheticOcrLine('2330')];
+          return [syntheticOcrLine(
+            readinessStage === 'default'
               ? '綜合健檢 2330 台積電'
               : '綜合健檢 台積電',
-          }];
+          )];
         },
         now: () => new Date(2026, 7, 19),
       },
@@ -807,7 +871,7 @@ test('capture 的 PSM11 adjacent-column fragments 不得通過且零發布', asy
         exec: syntheticCaptureExec(udid),
         ocrLines: (_file, lang, options) => {
           ocrCalls.push({ lang, options });
-          return options?.psm === 11 ? negative.sparseLines : [{ text: '精選' }];
+          return options?.psm === 11 ? negative.sparseLines : [syntheticOcrLine('精選')];
         },
         sleep: async () => {},
         clock: () => clockValues.shift() ?? 2000,
@@ -826,13 +890,15 @@ test('capture 的 PSM11 adjacent-column fragments 不得通過且零發布', asy
   assert.equal(fs.existsSync(manifest), false);
 });
 
-test('capture 的 default/PSM6 adjacent-column fragments 不得通過且零發布', async (t) => {
+test('capture 的 default/PSM6 單一 TSV line 跨欄 fragments 不得通過且零發布', async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-dense-negative-test-'));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
   const udid = '11111111-1111-1111-1111-111111111111';
-  const negative = ocrGeometryFixture.cases.find(
-    (fixture) => fixture.id === 'wrong-tab-fragments-in-adjacent-columns',
-  );
+  const groupedAdjacentLine = geometryOcrLine([
+    { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
+    { t: '噴發', x: 260, y: 402, w: 72, h: 33 },
+  ]);
+  assert.equal(groupedAdjacentLine.text, '主力狂收噴發');
 
   for (const stage of ['default', 'psm6']) {
     const output = path.join(tempDir, `${stage}.png`);
@@ -859,10 +925,10 @@ test('capture 的 default/PSM6 adjacent-column fragments 不得通過且零發�
             ocrCalls.push({ lang, options });
             if (options?.psm === 11) return [];
             if (stage === 'default' && options === undefined) {
-              return [{ text: '精選' }, ...negative.sparseLines];
+              return [syntheticOcrLine('精選'), groupedAdjacentLine];
             }
-            if (stage === 'psm6' && options?.psm === 6) return negative.sparseLines;
-            return [{ text: '精選' }];
+            if (stage === 'psm6' && options?.psm === 6) return [groupedAdjacentLine];
+            return [syntheticOcrLine('精選')];
           },
           sleep: async () => {},
           clock: () => clockValues.shift() ?? 2000,
@@ -934,8 +1000,8 @@ test('capture 只在 OCR 通過後寫入 PNG 與不含 token 的 manifest', asyn
       ocrLines: (_file, lang, options) => {
         ocrCalls.push({ lang, options });
         return options?.psm === 6
-          ? [{ text: '台積賣 2330' }]
-          : [{ text: '綜合健檢與綜合評語交易屬性健診台積電' }];
+          ? [syntheticOcrLine('台積賣 2330')]
+          : [syntheticOcrLine('綜合健檢與綜合評語交易屬性健診台積電')];
       },
       sleep: async () => {},
       clock: () => (tick += 100),
