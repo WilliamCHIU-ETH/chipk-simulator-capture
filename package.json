@@ -13,7 +13,8 @@
   "scripts": {
     "test": "node --test test/*.test.js scripts/*.test.js",
     "test:conformance": "node --test test/conformance-cli.test.js",
-    "check": "node bin/chipk-capture.js capabilities --json && node scripts/simulator-capture.js catalog-check --json && node scripts/simulator-record.js recipe-check --json",
+    "check": "node bin/chipk-capture.js capabilities --json && node scripts/simulator-capture.js catalog-check --json && node scripts/simulator-record.js recipe-check --json && npm run check:prepared",
+    "check:prepared": "node scripts/prepare-mobile-clip.js profile-check --json",
     "refresh:catalog": "node bin/chipk-refresh-catalog.js",
     "scan:source-only": "node test/sanitized-tree-check.js",
     "scan:sanitized": "npm run scan:source-only",
