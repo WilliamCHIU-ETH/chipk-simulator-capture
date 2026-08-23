@@ -730,8 +730,9 @@ function matchedExpectedTexts(lines, expectedTexts) {
 
 const SPARSE_OCR_MAX_CHAIN_LINES = 3;
 const SPARSE_OCR_MAX_VERTICAL_GAP_HEIGHTS = 1.5;
+const SPARSE_OCR_MAX_VERTICAL_OVERLAP_HEIGHTS = 0.2;
 const SPARSE_OCR_MIN_HORIZONTAL_OVERLAP = 0.5;
-const SPARSE_OCR_SPATIAL_STRATEGY = 'same_column_vertical_adjacency_v1';
+const SPARSE_OCR_SPATIAL_STRATEGY = 'same_column_vertical_adjacency_v2';
 
 function sparseLineGeometry(line) {
   const values = ['x', 'y', 'w', 'h'].map((key) => Number(line?.[key]));
@@ -760,9 +761,11 @@ function isNextSparseLine(first, second) {
     return false;
   }
   const verticalGap = secondBox.y - (firstBox.y + firstBox.h);
+  const minAllowedGap = -Math.min(firstBox.h, secondBox.h)
+    * SPARSE_OCR_MAX_VERTICAL_OVERLAP_HEIGHTS;
   const maxAllowedGap = Math.max(firstBox.h, secondBox.h)
     * SPARSE_OCR_MAX_VERTICAL_GAP_HEIGHTS;
-  return verticalGap >= 0 && verticalGap <= maxAllowedGap;
+  return verticalGap >= minAllowedGap && verticalGap <= maxAllowedGap;
 }
 
 function sparseTextCandidates(lines) {
@@ -891,7 +894,14 @@ async function captureRoute(catalog, input, deps = {}) {
       ocrCallCount += 1;
       let resolvedBy = 'default';
       let lines = ocr(tempScreenshot, 'chi_tra');
-      let sparseLines = [];
+      let sparseLines = null;
+      const runSparseOcr = () => {
+        if (sparseLines !== null) return sparseLines;
+        ocrModesTried.add('psm11');
+        ocrCallCount += 1;
+        sparseLines = ocr(tempScreenshot, 'chi_tra', { psm: 11 });
+        return sparseLines;
+      };
       let match = matchedExpectedTexts(lines, plan.expectedTexts);
       if (match.missing.length > 0) {
         ocrModesTried.add('psm6');
@@ -901,18 +911,15 @@ async function captureRoute(catalog, input, deps = {}) {
         match = matchedExpectedTexts(lines, plan.expectedTexts);
       }
       if (match.missing.length > 0) {
-        ocrModesTried.add('psm11');
-        ocrCallCount += 1;
         resolvedBy = 'psm11_spatial';
-        sparseLines = ocr(tempScreenshot, 'chi_tra', { psm: 11 });
-        const sparseMatch = matchedSparseExpectedTexts(sparseLines, match.missing);
+        const sparseMatch = matchedSparseExpectedTexts(runSparseOcr(), match.missing);
         match = mergeExpectedTextMatches(plan.expectedTexts, match, sparseMatch);
       }
       if (match.missing.length === 0) {
         let contentMatch = matchedExpectedTexts(lines, plan.contentTexts);
-        if (contentMatch.missing.length > 0 && sparseLines.length > 0) {
+        if (contentMatch.missing.length > 0) {
           const sparseContentMatch = matchedSparseExpectedTexts(
-            sparseLines,
+            runSparseOcr(),
             contentMatch.missing,
           );
           contentMatch = mergeExpectedTextMatches(

@@ -610,6 +610,15 @@ test('sparse OCR 只串接同欄垂直相鄰 fragments，不跨相鄰欄誤判',
       fixture.expectedTexts.filter((text) => !fixture.expectedMatched.includes(text)),
       fixture.id,
     );
+    if (fixture.contentTexts) {
+      const contentMatch = matchedSparseExpectedTexts(fixture.sparseLines, fixture.contentTexts);
+      assert.deepEqual(contentMatch.matched, fixture.expectedContentMatched, fixture.id);
+      assert.deepEqual(
+        contentMatch.missing,
+        fixture.contentTexts.filter((text) => !fixture.expectedContentMatched.includes(text)),
+        fixture.id,
+      );
+    }
   }
 });
 
@@ -635,7 +644,7 @@ test('capture 在 default OCR 已命中時不執行任何 fallback', async (t) =
       exec: syntheticCaptureExec(udid),
       ocrLines: (_file, lang, options) => {
         ocrCalls.push({ lang, options });
-        return [{ text: '綜合健檢 2330' }];
+        return [{ text: '綜合健檢 2330 綜合評語 交易屬性健診 台積電' }];
       },
       now: () => new Date(2026, 7, 19),
     },
@@ -699,11 +708,74 @@ test('capture 單次 PSM11 驗 wrapped readiness/content 且拒絕 adjacent-colu
   assert.deepEqual(result.verification.ocrReadiness, {
     modesTried: ['default', 'psm6', 'psm11'],
     sparseFallbackAttempted: true,
-    spatialStrategy: 'same_column_vertical_adjacency_v1',
+    spatialStrategy: 'same_column_vertical_adjacency_v2',
     resolvedBy: 'psm11_spatial',
     pollAttemptCount: 1,
     ocrCallCount: 3,
   });
+});
+
+test('capture readiness 由 default/PSM6 解決時只補一次 PSM11 content fallback', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-content-ocr-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const positive = ocrGeometryFixture.cases.find(
+    (fixture) => fixture.id === 'wrapped-target-with-adjacent-column',
+  );
+
+  for (const readinessStage of ['default', 'psm6']) {
+    const catalog = fixtureCatalog();
+    catalog.routes[0].contentTexts = positive.contentTexts;
+    const ocrCalls = [];
+    const result = await captureRoute(
+      catalog,
+      {
+        route: 'stock-health-check',
+        mode: 'test',
+        stockId: '2330',
+        stockName: '台積電',
+        udid,
+        output: path.join(tempDir, `${readinessStage}.png`),
+        manifest: path.join(tempDir, `${readinessStage}.json`),
+        confirmVipSession: true,
+      },
+      {
+        exec: syntheticCaptureExec(udid),
+        ocrLines: (_file, lang, options) => {
+          ocrCalls.push({ lang, options });
+          if (options?.psm === 11) return positive.sparseLines;
+          if (options?.psm === 6) return [{ text: '2330' }];
+          return [{
+            text: readinessStage === 'default'
+              ? '綜合健檢 2330 台積電'
+              : '綜合健檢 台積電',
+          }];
+        },
+        now: () => new Date(2026, 7, 19),
+      },
+    );
+
+    assert.deepEqual(result.verification.contentTexts, {
+      expected: [...positive.contentTexts, '台積電'],
+      observed: [...positive.expectedContentMatched, '台積電'],
+      missing: ['相鄰內容'],
+    }, readinessStage);
+    assert.deepEqual(result.verification.ocrReadiness, {
+      modesTried: readinessStage === 'default'
+        ? ['default', 'psm11']
+        : ['default', 'psm6', 'psm11'],
+      sparseFallbackAttempted: true,
+      spatialStrategy: 'same_column_vertical_adjacency_v2',
+      resolvedBy: readinessStage,
+      pollAttemptCount: 1,
+      ocrCallCount: readinessStage === 'default' ? 2 : 3,
+    }, readinessStage);
+    assert.equal(
+      ocrCalls.filter((call) => call.options?.psm === 11).length,
+      1,
+      readinessStage,
+    );
+  }
 });
 
 test('capture 的 PSM11 adjacent-column fragments 不得通過且零發布', async (t) => {
@@ -863,7 +935,7 @@ test('capture 只在 OCR 通過後寫入 PNG 與不含 token 的 manifest', asyn
         ocrCalls.push({ lang, options });
         return options?.psm === 6
           ? [{ text: '台積賣 2330' }]
-          : [{ text: '綜合健檢與綜合評語' }];
+          : [{ text: '綜合健檢與綜合評語交易屬性健診台積電' }];
       },
       sleep: async () => {},
       clock: () => (tick += 100),
@@ -891,8 +963,8 @@ test('capture 只在 OCR 通過後寫入 PNG 與不含 token 的 manifest', asyn
   assert.equal(manifest.sourceVersion, 'fixture-v1');
   assert.deepEqual(manifest.verification.contentTexts, {
     expected: ['綜合評語', '交易屬性健診', '台積電'],
-    observed: ['綜合評語'],
-    missing: ['交易屬性健診', '台積電'],
+    observed: ['綜合評語', '交易屬性健診', '台積電'],
+    missing: [],
   });
   assert.equal(
     manifest.screenshot.sha256,
