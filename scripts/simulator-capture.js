@@ -821,7 +821,7 @@ const SPARSE_OCR_MAX_CHAIN_LINES = 3;
 const SPARSE_OCR_MAX_VERTICAL_GAP_HEIGHTS = 1.5;
 const SPARSE_OCR_MAX_VERTICAL_OVERLAP_HEIGHTS = 0.2;
 const SPARSE_OCR_MIN_HORIZONTAL_OVERLAP = 0.5;
-const SPARSE_OCR_SPATIAL_STRATEGY = 'word_cluster_same_column_vertical_adjacency_v3';
+const SPARSE_OCR_SPATIAL_STRATEGY = 'word_cluster_chain_start_alignment_v4';
 
 function sparseLineGeometry(line) {
   const values = ['x', 'y', 'w', 'h'].map((key) => Number(line?.[key]));
@@ -839,6 +839,13 @@ function horizontalOverlapRatio(first, second) {
   return overlap / Math.min(first.w, second.w);
 }
 
+function sparseLinesShareColumn(first, second) {
+  const firstBox = sparseLineGeometry(first);
+  const secondBox = sparseLineGeometry(second);
+  if (!firstBox || !secondBox) return false;
+  return horizontalOverlapRatio(firstBox, secondBox) >= SPARSE_OCR_MIN_HORIZONTAL_OVERLAP;
+}
+
 function isNextSparseLine(first, second) {
   const firstBox = sparseLineGeometry(first);
   const secondBox = sparseLineGeometry(second);
@@ -846,9 +853,7 @@ function isNextSparseLine(first, second) {
   const firstCenterY = firstBox.y + firstBox.h / 2;
   const secondCenterY = secondBox.y + secondBox.h / 2;
   if (secondCenterY <= firstCenterY) return false;
-  if (horizontalOverlapRatio(firstBox, secondBox) < SPARSE_OCR_MIN_HORIZONTAL_OVERLAP) {
-    return false;
-  }
+  if (!sparseLinesShareColumn(first, second)) return false;
   const verticalGap = secondBox.y - (firstBox.y + firstBox.h);
   const minAllowedGap = -Math.min(firstBox.h, secondBox.h)
     * SPARSE_OCR_MAX_VERTICAL_OVERLAP_HEIGHTS;
@@ -884,7 +889,9 @@ function sparseTextCandidates(lines) {
     for (let depth = 1; depth < SPARSE_OCR_MAX_CHAIN_LINES; depth += 1) {
       const next = ordered
         .filter((candidate) =>
-          candidate.nodeId !== current.nodeId && isNextSparseLine(current, candidate),
+          candidate.nodeId !== current.nodeId &&
+          isNextSparseLine(current, candidate) &&
+          sparseLinesShareColumn(start, candidate),
         )
         .sort((first, second) => {
           const firstBox = sparseLineGeometry(first);

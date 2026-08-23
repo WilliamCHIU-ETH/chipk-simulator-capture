@@ -110,6 +110,14 @@ function geometryOcrLine(words) {
   };
 }
 
+function stairStepOcrLines() {
+  return [
+    geometryOcrLine([{ t: '主力', x: 0, y: 500, w: 100, h: 35 }]),
+    geometryOcrLine([{ t: '狂收', x: 50, y: 547, w: 100, h: 35 }]),
+    geometryOcrLine([{ t: '噴發', x: 100, y: 594, w: 100, h: 35 }]),
+  ];
+}
+
 function featuredFixtureCatalog() {
   const catalog = fixtureCatalog();
   Object.assign(catalog.routes[0], {
@@ -660,10 +668,16 @@ test('PSM11 只以有 bounding box 的 word clusters 作單行與垂直 wrapped 
     { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
     { t: '噴發', x: 181, y: 402, w: 72, h: 33 },
   ]);
-  const wrapped = [
+  const twoLineWrapped = [
     geometryOcrLine([{ t: '主力狂收', x: 24, y: 500, w: 150, h: 35 }]),
     geometryOcrLine([{ t: '噴發', x: 63, y: 547, w: 72, h: 35 }]),
   ];
+  const threeLineWrapped = [
+    geometryOcrLine([{ t: '主力', x: 24, y: 600, w: 70, h: 35 }]),
+    geometryOcrLine([{ t: '狂收', x: 30, y: 647, w: 80, h: 35 }]),
+    geometryOcrLine([{ t: '噴發', x: 36, y: 694, w: 72, h: 35 }]),
+  ];
+  const stairStep = stairStepOcrLines();
   const groupedAdjacentColumns = geometryOcrLine([
     { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
     { t: '噴發', x: 260, y: 402, w: 72, h: 33 },
@@ -674,8 +688,16 @@ test('PSM11 只以有 bounding box 的 word clusters 作單行與垂直 wrapped 
     { matched: ['精選', '主力狂收噴發'], missing: [] },
   );
   assert.deepEqual(
-    matchedSparseExpectedTexts(wrapped, ['主力狂收噴發']),
+    matchedSparseExpectedTexts(twoLineWrapped, ['主力狂收噴發']),
     { matched: ['主力狂收噴發'], missing: [] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts(threeLineWrapped, ['主力狂收噴發']),
+    { matched: ['主力狂收噴發'], missing: [] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts(stairStep, ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
   );
   assert.deepEqual(
     matchedSparseExpectedTexts([groupedAdjacentColumns], ['主力狂收噴發']),
@@ -817,7 +839,7 @@ test('capture 單次 PSM11 驗 wrapped readiness/content 且拒絕 adjacent-colu
   assert.deepEqual(result.verification.ocrReadiness, {
     modesTried: ['default', 'psm6', 'psm11'],
     sparseFallbackAttempted: true,
-    spatialStrategy: 'word_cluster_same_column_vertical_adjacency_v3',
+    spatialStrategy: 'word_cluster_chain_start_alignment_v4',
     resolvedBy: 'psm11_spatial',
     pollAttemptCount: 1,
     ocrCallCount: 3,
@@ -874,7 +896,7 @@ test('capture readiness 由 default/PSM6 解決時只補一次 PSM11 content fal
         ? ['default', 'psm11']
         : ['default', 'psm6', 'psm11'],
       sparseFallbackAttempted: true,
-      spatialStrategy: 'word_cluster_same_column_vertical_adjacency_v3',
+      spatialStrategy: 'word_cluster_chain_start_alignment_v4',
       resolvedBy: readinessStage,
       pollAttemptCount: 1,
       ocrCallCount: readinessStage === 'default' ? 2 : 3,
@@ -968,6 +990,53 @@ test('capture 的 PSM11 單一 TSV line 跨欄 words 不得通過且零發布', 
           ocrCalls.push({ lang, options });
           return options?.psm === 11
             ? [groupedAdjacentLine]
+            : [syntheticOcrLine('精選')];
+        },
+        sleep: async () => {},
+        clock: () => clockValues.shift() ?? 2000,
+        now: () => new Date(2026, 7, 19),
+      },
+    ),
+    (error) => error instanceof CliError && error.code === 'expected_text_timeout',
+  );
+
+  assert.deepEqual(ocrCalls, [
+    { lang: 'chi_tra', options: undefined },
+    { lang: 'chi_tra', options: { psm: 6 } },
+    { lang: 'chi_tra', options: { psm: 11 } },
+  ]);
+  assert.equal(fs.existsSync(output), false);
+  assert.equal(fs.existsSync(manifest), false);
+});
+
+test('capture 的 PSM11 三行 stair-step fragments 不得通過且零發布', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-psm11-chain-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const output = path.join(tempDir, 'capture.png');
+  const manifest = path.join(tempDir, 'capture.json');
+  const ocrCalls = [];
+  const clockValues = [0, 0, 2000];
+
+  await assert.rejects(
+    () => captureRoute(
+      featuredFixtureCatalog(),
+      {
+        route: 'featured-main-force',
+        mode: 'test',
+        udid,
+        output,
+        manifest,
+        timeoutMs: 1000,
+        pollMs: 250,
+        confirmVipSession: true,
+      },
+      {
+        exec: syntheticCaptureExec(udid),
+        ocrLines: (_file, lang, options) => {
+          ocrCalls.push({ lang, options });
+          return options?.psm === 11
+            ? stairStepOcrLines()
             : [syntheticOcrLine('精選')];
         },
         sleep: async () => {},
