@@ -716,10 +716,214 @@ function getSourceVersion(catalog) {
   return `sha256:${digest}`;
 }
 
+const DENSE_OCR_MAX_HORIZONTAL_GAP_HEIGHTS = 0.75;
+const DENSE_OCR_MIN_VERTICAL_OVERLAP = 0.5;
+
+function denseWordGeometry(word) {
+  const text = String(word?.t ?? '');
+  const values = ['x', 'y', 'w', 'h'].map((key) => Number(word?.[key]));
+  if (text.trim() === '' || values.some((value) => !Number.isFinite(value))) return null;
+  const [x, y, w, h] = values;
+  if (w <= 0 || h <= 0) return null;
+  return { text, x, y, w, h };
+}
+
+function denseWordsShareRow(first, second) {
+  const overlap = Math.max(
+    0,
+    Math.min(first.y + first.h, second.y + second.h) - Math.max(first.y, second.y),
+  );
+  return overlap / Math.min(first.h, second.h) >= DENSE_OCR_MIN_VERTICAL_OVERLAP;
+}
+
+function denseWordsAreContiguous(first, second) {
+  if (!denseWordsShareRow(first, second)) return false;
+  const horizontalGap = second.x - (first.x + first.w);
+  const maxHorizontalGap = Math.max(first.h, second.h)
+    * DENSE_OCR_MAX_HORIZONTAL_GAP_HEIGHTS;
+  return horizontalGap <= maxHorizontalGap;
+}
+
+function denseClusterNode(words) {
+  const x = Math.min(...words.map((word) => word.x));
+  const y = Math.min(...words.map((word) => word.y));
+  const right = Math.max(...words.map((word) => word.x + word.w));
+  const bottom = Math.max(...words.map((word) => word.y + word.h));
+  return {
+    text: words.map((word) => word.text).join(''),
+    x,
+    y,
+    w: right - x,
+    h: bottom - y,
+  };
+}
+
+function denseWordClusters(line) {
+  // Hand-authored tests may opt into text-only input explicitly. Runtime OCR always supplies
+  // word boxes; missing or malformed production geometry must fail closed.
+  if (line?.synthetic === true && line.words === undefined) {
+    if (!normalizeForMatch(line.text)) return [];
+    const node = { text: String(line.text) };
+    const values = ['x', 'y', 'w', 'h'].map((key) => Number(line?.[key]));
+    if (
+      values.every((value) => Number.isFinite(value)) &&
+      values[2] > 0 &&
+      values[3] > 0
+    ) {
+      [node.x, node.y, node.w, node.h] = values;
+    }
+    return [node];
+  }
+  if (!Array.isArray(line?.words) || line.words.length === 0) return [];
+  const words = line.words.map(denseWordGeometry);
+  if (words.some((word) => word === null)) return [];
+  words.sort((first, second) => first.x - second.x || first.y - second.y);
+
+  const clusters = [];
+  let cluster = [words[0]];
+  for (const word of words.slice(1)) {
+    const previous = cluster[cluster.length - 1];
+    const clusterStart = cluster[0];
+    if (
+      denseWordsAreContiguous(previous, word) &&
+      denseWordsShareRow(clusterStart, word)
+    ) {
+      cluster.push(word);
+    } else {
+      clusters.push(cluster);
+      cluster = [word];
+    }
+  }
+  clusters.push(cluster);
+  return clusters.map(denseClusterNode);
+}
+
+function denseTextCandidates(line) {
+  return denseWordClusters(line).map((cluster) => cluster.text);
+}
+
 function matchedExpectedTexts(lines, expectedTexts) {
-  const haystack = normalizeForMatch(lines.map((line) => line.text).join('\n'));
-  const matched = expectedTexts.filter((text) => haystack.includes(normalizeForMatch(text)));
+  // Default and PSM6 may group horizontally separated columns into one TSV line. Only exact
+  // normalized substrings inside a contiguous same-row word cluster are eligible. Wrapped text
+  // belongs to the geometry-aware PSM11 fallback below.
+  const candidates = lines
+    .flatMap(denseTextCandidates)
+    .map(normalizeForMatch)
+    .filter(Boolean);
+  const matched = expectedTexts.filter((text) => {
+    const expected = normalizeForMatch(text);
+    return expected && candidates.some((candidate) => candidate.includes(expected));
+  });
   return { matched, missing: expectedTexts.filter((text) => !matched.includes(text)) };
+}
+
+const SPARSE_OCR_MAX_CHAIN_LINES = 3;
+const SPARSE_OCR_MAX_VERTICAL_GAP_HEIGHTS = 1.5;
+const SPARSE_OCR_MAX_VERTICAL_OVERLAP_HEIGHTS = 0.2;
+const SPARSE_OCR_MIN_HORIZONTAL_OVERLAP = 0.5;
+const SPARSE_OCR_SPATIAL_STRATEGY = 'word_cluster_chain_start_alignment_v4';
+
+function sparseLineGeometry(line) {
+  const values = ['x', 'y', 'w', 'h'].map((key) => Number(line?.[key]));
+  if (values.some((value) => !Number.isFinite(value))) return null;
+  const [x, y, w, h] = values;
+  if (w <= 0 || h <= 0) return null;
+  return { x, y, w, h };
+}
+
+function horizontalOverlapRatio(first, second) {
+  const overlap = Math.max(
+    0,
+    Math.min(first.x + first.w, second.x + second.w) - Math.max(first.x, second.x),
+  );
+  return overlap / Math.min(first.w, second.w);
+}
+
+function sparseLinesShareColumn(first, second) {
+  const firstBox = sparseLineGeometry(first);
+  const secondBox = sparseLineGeometry(second);
+  if (!firstBox || !secondBox) return false;
+  return horizontalOverlapRatio(firstBox, secondBox) >= SPARSE_OCR_MIN_HORIZONTAL_OVERLAP;
+}
+
+function isNextSparseLine(first, second) {
+  const firstBox = sparseLineGeometry(first);
+  const secondBox = sparseLineGeometry(second);
+  if (!firstBox || !secondBox) return false;
+  const firstCenterY = firstBox.y + firstBox.h / 2;
+  const secondCenterY = secondBox.y + secondBox.h / 2;
+  if (secondCenterY <= firstCenterY) return false;
+  if (!sparseLinesShareColumn(first, second)) return false;
+  const verticalGap = secondBox.y - (firstBox.y + firstBox.h);
+  const minAllowedGap = -Math.min(firstBox.h, secondBox.h)
+    * SPARSE_OCR_MAX_VERTICAL_OVERLAP_HEIGHTS;
+  const maxAllowedGap = Math.max(firstBox.h, secondBox.h)
+    * SPARSE_OCR_MAX_VERTICAL_GAP_HEIGHTS;
+  return verticalGap >= minAllowedGap && verticalGap <= maxAllowedGap;
+}
+
+function sparseTextCandidates(lines) {
+  // PSM11 may still group separate columns into one TSV line. Normalize every line into the same
+  // bounded word clusters used by dense OCR, then treat those cluster boxes as the only atomic
+  // candidates for short downward chains. Never seed a candidate from raw line.text.
+  const ordered = lines
+    .flatMap((line, lineIndex) =>
+      denseWordClusters(line).map((cluster, clusterIndex) => ({
+        ...cluster,
+        nodeId: `${lineIndex}:${clusterIndex}`,
+      })),
+    )
+    .filter((line) => normalizeForMatch(line.text) && sparseLineGeometry(line))
+    .sort((first, second) => {
+      const firstBox = sparseLineGeometry(first);
+      const secondBox = sparseLineGeometry(second);
+      return firstBox.y - secondBox.y || firstBox.x - secondBox.x ||
+        first.nodeId.localeCompare(second.nodeId);
+    });
+  const candidates = new Set(ordered.map((line) => line.text));
+
+  for (const start of ordered) {
+    if (!sparseLineGeometry(start)) continue;
+    let current = start;
+    let combined = start.text;
+    for (let depth = 1; depth < SPARSE_OCR_MAX_CHAIN_LINES; depth += 1) {
+      const next = ordered
+        .filter((candidate) =>
+          candidate.nodeId !== current.nodeId &&
+          isNextSparseLine(current, candidate) &&
+          sparseLinesShareColumn(start, candidate),
+        )
+        .sort((first, second) => {
+          const firstBox = sparseLineGeometry(first);
+          const secondBox = sparseLineGeometry(second);
+          const currentBox = sparseLineGeometry(current);
+          const firstGap = firstBox.y - (currentBox.y + currentBox.h);
+          const secondGap = secondBox.y - (currentBox.y + currentBox.h);
+          return firstGap - secondGap || firstBox.x - secondBox.x ||
+            first.nodeId.localeCompare(second.nodeId);
+        })[0];
+      if (!next) break;
+      combined += next.text;
+      candidates.add(combined);
+      current = next;
+    }
+  }
+  return [...candidates];
+}
+
+function matchedSparseExpectedTexts(lines, expectedTexts) {
+  const candidates = sparseTextCandidates(lines).map(normalizeForMatch);
+  const matched = expectedTexts.filter((text) => {
+    const expected = normalizeForMatch(text);
+    return expected && candidates.some((candidate) => candidate.includes(expected));
+  });
+  return { matched, missing: expectedTexts.filter((text) => !matched.includes(text)) };
+}
+
+function mergeExpectedTextMatches(expectedTexts, ...matches) {
+  const observed = new Set(matches.flatMap((match) => match.matched));
+  const matched = expectedTexts.filter((text) => observed.has(text));
+  return { matched, missing: expectedTexts.filter((text) => !observed.has(text)) };
 }
 
 function sha256(filePath) {
@@ -780,20 +984,54 @@ async function captureRoute(catalog, input, deps = {}) {
   const wait = deps.sleep || sleep;
   const clock = deps.clock || Date.now;
   const started = clock();
+  const ocrModesTried = new Set();
+  let ocrCallCount = 0;
+  let pollAttemptCount = 0;
   let result;
   try {
     exec('xcrun', ['simctl', 'openurl', input.udid, plan.url]);
     while (clock() - started <= timeoutMs) {
+      pollAttemptCount += 1;
       exec('xcrun', ['simctl', 'io', input.udid, 'screenshot', tempScreenshot]);
+      ocrModesTried.add('default');
+      ocrCallCount += 1;
+      let resolvedBy = 'default';
       let lines = ocr(tempScreenshot, 'chi_tra');
+      let sparseLines = null;
+      const runSparseOcr = () => {
+        if (sparseLines !== null) return sparseLines;
+        ocrModesTried.add('psm11');
+        ocrCallCount += 1;
+        sparseLines = ocr(tempScreenshot, 'chi_tra', { psm: 11 });
+        return sparseLines;
+      };
       let match = matchedExpectedTexts(lines, plan.expectedTexts);
       if (match.missing.length > 0) {
+        ocrModesTried.add('psm6');
+        ocrCallCount += 1;
+        resolvedBy = 'psm6';
         lines = [...lines, ...ocr(tempScreenshot, 'chi_tra', { psm: 6 })];
         match = matchedExpectedTexts(lines, plan.expectedTexts);
       }
+      if (match.missing.length > 0) {
+        resolvedBy = 'psm11_spatial';
+        const sparseMatch = matchedSparseExpectedTexts(runSparseOcr(), match.missing);
+        match = mergeExpectedTextMatches(plan.expectedTexts, match, sparseMatch);
+      }
       if (match.missing.length === 0) {
-        const contentMatch = matchedExpectedTexts(lines, plan.contentTexts);
-        result = { match, contentMatch, elapsedMs: clock() - started };
+        let contentMatch = matchedExpectedTexts(lines, plan.contentTexts);
+        if (contentMatch.missing.length > 0) {
+          const sparseContentMatch = matchedSparseExpectedTexts(
+            runSparseOcr(),
+            contentMatch.missing,
+          );
+          contentMatch = mergeExpectedTextMatches(
+            plan.contentTexts,
+            contentMatch,
+            sparseContentMatch,
+          );
+        }
+        result = { match, contentMatch, elapsedMs: clock() - started, resolvedBy };
         break;
       }
       await wait(pollMs);
@@ -830,6 +1068,14 @@ async function captureRoute(catalog, input, deps = {}) {
           expected: plan.contentTexts,
           observed: result.contentMatch.matched,
           missing: result.contentMatch.missing,
+        },
+        ocrReadiness: {
+          modesTried: [...ocrModesTried],
+          sparseFallbackAttempted: ocrModesTried.has('psm11'),
+          spatialStrategy: ocrModesTried.has('psm11') ? SPARSE_OCR_SPATIAL_STRATEGY : null,
+          resolvedBy: result.resolvedBy,
+          pollAttemptCount,
+          ocrCallCount,
         },
         elapsedMs: result.elapsedMs,
       },
@@ -1020,6 +1266,7 @@ module.exports = {
   getSourceVersion,
   localDate,
   matchedExpectedTexts,
+  matchedSparseExpectedTexts,
   normalizeForMatch,
   parseArgs,
   readCatalog,

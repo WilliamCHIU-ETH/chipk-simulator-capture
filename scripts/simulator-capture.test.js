@@ -13,12 +13,14 @@ const {
   exactSimulator,
   getSourceVersion,
   matchedExpectedTexts,
+  matchedSparseExpectedTexts,
   parseArgs,
   readCatalog,
   resolveStock,
   suggestRoutes,
   validateCatalog,
 } = require('./simulator-capture');
+const ocrGeometryFixture = require('../fixtures/synthetic/ocr-readiness-geometry.json');
 
 function fixtureCatalog() {
   return {
@@ -68,6 +70,67 @@ function fixtureCatalog() {
       },
     ],
   };
+}
+
+function syntheticCaptureExec(udid) {
+  return (file, args) => {
+    if (file === 'xcrun' && args[1] === 'list') {
+      return JSON.stringify({
+        devices: { runtime: [{ udid, name: 'iPhone Test', state: 'Booted', isAvailable: true }] },
+      });
+    }
+    if (file === 'xcrun' && args[1] === 'get_app_container') return '/tmp/FakeChipK.app';
+    if (file === 'plutil') return args[1] === 'CFBundleVersion' ? '100' : '10.0.0';
+    if (file === 'tesseract') return 'List of available languages (1):\nchi_tra';
+    if (file === 'xcrun' && args[1] === 'openurl') return '';
+    if (file === 'xcrun' && args[1] === 'io') {
+      fs.writeFileSync(args[4], 'synthetic-png-bytes');
+      return '';
+    }
+    throw new Error(`unexpected command: ${file} ${args.join(' ')}`);
+  };
+}
+
+function syntheticOcrLine(text) {
+  return { text, synthetic: true };
+}
+
+function geometryOcrLine(words) {
+  const x0 = Math.min(...words.map((word) => word.x));
+  const y0 = Math.min(...words.map((word) => word.y));
+  const x1 = Math.max(...words.map((word) => word.x + word.w));
+  const y1 = Math.max(...words.map((word) => word.y + word.h));
+  return {
+    text: words.map((word) => word.t).join(''),
+    words,
+    x: x0,
+    y: y0,
+    w: x1 - x0,
+    h: y1 - y0,
+  };
+}
+
+function stairStepOcrLines() {
+  return [
+    geometryOcrLine([{ t: '主力', x: 0, y: 500, w: 100, h: 35 }]),
+    geometryOcrLine([{ t: '狂收', x: 50, y: 547, w: 100, h: 35 }]),
+    geometryOcrLine([{ t: '噴發', x: 100, y: 594, w: 100, h: 35 }]),
+  ];
+}
+
+function featuredFixtureCatalog() {
+  const catalog = fixtureCatalog();
+  Object.assign(catalog.routes[0], {
+    id: 'featured-main-force',
+    page: 'select',
+    subpage: 3,
+    name: '精選主力策略',
+    requiredParams: [],
+    optionalParams: [],
+    expectedTexts: ['精選', '主力狂收噴發'],
+    contentTexts: [],
+  });
+  return catalog;
 }
 
 test('catalog schema 接受固定 ChipK target 與完整 route 欄位', () => {
@@ -453,11 +516,17 @@ test('股票名稱 OCR 誤字不阻擋 route label + exact ID readiness', () => 
   assert.deepEqual(plan.expectedTexts, ['主力', '2324']);
   assert.deepEqual(plan.contentTexts, ['仁寶']);
   assert.deepEqual(
-    matchedExpectedTexts([{ text: '仁賣 2324' }, { text: '主力進出' }], plan.expectedTexts),
+    matchedExpectedTexts(
+      [syntheticOcrLine('仁賣 2324'), syntheticOcrLine('主力進出')],
+      plan.expectedTexts,
+    ),
     { matched: ['主力', '2324'], missing: [] },
   );
   assert.deepEqual(
-    matchedExpectedTexts([{ text: '仁賣 2324' }, { text: '主力進出' }], plan.contentTexts),
+    matchedExpectedTexts(
+      [syntheticOcrLine('仁賣 2324'), syntheticOcrLine('主力進出')],
+      plan.contentTexts,
+    ),
     { matched: [], missing: ['仁寶'] },
   );
 });
@@ -548,11 +617,502 @@ test('preflight device resolution 必須 exact UDID，不任取 booted device', 
 
 test('OCR 驗證忽略空白與標點，但要求所有 expectedTexts', () => {
   const match = matchedExpectedTexts(
-    [{ text: '台 積 電（2330）' }, { text: '綜合 健檢' }],
+    [syntheticOcrLine('台 積 電（2330）'), syntheticOcrLine('綜合 健檢')],
     ['台積電', '健檢'],
   );
   assert.deepEqual(match, { matched: ['台積電', '健檢'], missing: [] });
-  assert.deepEqual(matchedExpectedTexts([{ text: '台積電' }], ['台積電', '健檢']).missing, ['健檢']);
+  assert.deepEqual(
+    matchedExpectedTexts([syntheticOcrLine('台積電')], ['台積電', '健檢']).missing,
+    ['健檢'],
+  );
+});
+
+test('default/PSM6 OCR 只匹配有 geometry 的同列連續 word clusters', () => {
+  const contiguous = geometryOcrLine([
+    { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
+    { t: '噴發', x: 181, y: 402, w: 72, h: 33 },
+  ]);
+  const oneWord = geometryOcrLine([
+    { t: '精選', x: 24, y: 300, w: 72, h: 35 },
+  ]);
+  const adjacentColumns = geometryOcrLine([
+    { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
+    { t: '噴發', x: 260, y: 402, w: 72, h: 33 },
+  ]);
+
+  assert.deepEqual(
+    matchedExpectedTexts([contiguous, oneWord], ['精選', '主力狂收噴發']),
+    { matched: ['精選', '主力狂收噴發'], missing: [] },
+  );
+  assert.deepEqual(
+    matchedExpectedTexts([adjacentColumns], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+  assert.deepEqual(
+    matchedExpectedTexts([{ text: '主力狂收噴發' }], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+  assert.deepEqual(
+    matchedExpectedTexts([
+      { text: '主力狂收噴發', words: [{ t: '主力狂收噴發', x: 24, y: 400, w: 0, h: 35 }] },
+    ], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+});
+
+test('PSM11 只以有 bounding box 的 word clusters 作單行與垂直 wrapped 候選', () => {
+  const oneWord = geometryOcrLine([
+    { t: '精選', x: 24, y: 300, w: 72, h: 35 },
+  ]);
+  const contiguous = geometryOcrLine([
+    { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
+    { t: '噴發', x: 181, y: 402, w: 72, h: 33 },
+  ]);
+  const twoLineWrapped = [
+    geometryOcrLine([{ t: '主力狂收', x: 24, y: 500, w: 150, h: 35 }]),
+    geometryOcrLine([{ t: '噴發', x: 63, y: 547, w: 72, h: 35 }]),
+  ];
+  const threeLineWrapped = [
+    geometryOcrLine([{ t: '主力', x: 24, y: 600, w: 70, h: 35 }]),
+    geometryOcrLine([{ t: '狂收', x: 30, y: 647, w: 80, h: 35 }]),
+    geometryOcrLine([{ t: '噴發', x: 36, y: 694, w: 72, h: 35 }]),
+  ];
+  const stairStep = stairStepOcrLines();
+  const groupedAdjacentColumns = geometryOcrLine([
+    { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
+    { t: '噴發', x: 260, y: 402, w: 72, h: 33 },
+  ]);
+
+  assert.deepEqual(
+    matchedSparseExpectedTexts([oneWord, contiguous], ['精選', '主力狂收噴發']),
+    { matched: ['精選', '主力狂收噴發'], missing: [] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts(twoLineWrapped, ['主力狂收噴發']),
+    { matched: ['主力狂收噴發'], missing: [] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts(threeLineWrapped, ['主力狂收噴發']),
+    { matched: ['主力狂收噴發'], missing: [] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts(stairStep, ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts([groupedAdjacentColumns], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts([{ text: '主力狂收噴發' }], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts([syntheticOcrLine('主力狂收噴發')], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts([
+      { text: '主力狂收噴發', words: [{ t: '主力狂收噴發', x: 24, y: 400, w: 0, h: 35 }] },
+    ], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+});
+
+test('default/PSM6 OCR 每個 expected text 只在單一 line 內匹配', () => {
+  const negative = ocrGeometryFixture.cases.find(
+    (fixture) => fixture.id === 'wrong-tab-fragments-in-adjacent-columns',
+  );
+  assert.deepEqual(
+    matchedExpectedTexts(
+      negative.sparseLines.map((line) => ({ ...line, synthetic: true })),
+      negative.expectedTexts,
+    ),
+    { matched: [], missing: negative.expectedTexts },
+  );
+});
+
+test('sparse OCR 只串接同欄垂直相鄰 fragments，不跨相鄰欄誤判', () => {
+  for (const fixture of ocrGeometryFixture.cases) {
+    const match = matchedSparseExpectedTexts(fixture.sparseLines, fixture.expectedTexts);
+    assert.deepEqual(match.matched, fixture.expectedMatched, fixture.id);
+    assert.deepEqual(
+      match.missing,
+      fixture.expectedTexts.filter((text) => !fixture.expectedMatched.includes(text)),
+      fixture.id,
+    );
+    if (fixture.contentTexts) {
+      const contentMatch = matchedSparseExpectedTexts(fixture.sparseLines, fixture.contentTexts);
+      assert.deepEqual(contentMatch.matched, fixture.expectedContentMatched, fixture.id);
+      assert.deepEqual(
+        contentMatch.missing,
+        fixture.contentTexts.filter((text) => !fixture.expectedContentMatched.includes(text)),
+        fixture.id,
+      );
+    }
+  }
+});
+
+test('capture 在 default OCR 已命中時不執行任何 fallback', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-default-ocr-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const ocrCalls = [];
+
+  const result = await captureRoute(
+    fixtureCatalog(),
+    {
+      route: 'stock-health-check',
+      mode: 'test',
+      stockId: '2330',
+      stockName: '台積電',
+      udid,
+      output: path.join(tempDir, 'capture.png'),
+      manifest: path.join(tempDir, 'capture.json'),
+      confirmVipSession: true,
+    },
+    {
+      exec: syntheticCaptureExec(udid),
+      ocrLines: (_file, lang, options) => {
+        ocrCalls.push({ lang, options });
+        return [syntheticOcrLine('綜合健檢 2330 綜合評語 交易屬性健診 台積電')];
+      },
+      now: () => new Date(2026, 7, 19),
+    },
+  );
+
+  assert.deepEqual(ocrCalls, [{ lang: 'chi_tra', options: undefined }]);
+  assert.deepEqual(result.verification.ocrReadiness, {
+    modesTried: ['default'],
+    sparseFallbackAttempted: false,
+    spatialStrategy: null,
+    resolvedBy: 'default',
+    pollAttemptCount: 1,
+    ocrCallCount: 1,
+  });
+});
+
+test('capture 單次 PSM11 驗 wrapped readiness/content 且拒絕 adjacent-column content', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-sparse-ocr-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const ocrCalls = [];
+  const catalog = featuredFixtureCatalog();
+  const positive = ocrGeometryFixture.cases.find(
+    (fixture) => fixture.id === 'wrapped-target-with-adjacent-column',
+  );
+  catalog.routes[0].contentTexts = positive.contentTexts;
+
+  const result = await captureRoute(
+    catalog,
+    {
+      route: 'featured-main-force',
+      mode: 'test',
+      udid,
+      output: path.join(tempDir, 'capture.png'),
+      manifest: path.join(tempDir, 'capture.json'),
+      confirmVipSession: true,
+    },
+    {
+      exec: syntheticCaptureExec(udid),
+      ocrLines: (_file, lang, options) => {
+        ocrCalls.push({ lang, options });
+        return options?.psm === 11 ? positive.sparseLines : [syntheticOcrLine('精選')];
+      },
+      now: () => new Date(2026, 7, 19),
+    },
+  );
+
+  assert.deepEqual(ocrCalls, [
+    { lang: 'chi_tra', options: undefined },
+    { lang: 'chi_tra', options: { psm: 6 } },
+    { lang: 'chi_tra', options: { psm: 11 } },
+  ]);
+  assert.deepEqual(result.verification.matchedTexts, ['精選', '主力狂收噴發']);
+  assert.deepEqual(result.verification.contentTexts, {
+    expected: positive.contentTexts,
+    observed: positive.expectedContentMatched,
+    missing: positive.contentTexts.filter(
+      (text) => !positive.expectedContentMatched.includes(text),
+    ),
+  });
+  assert.deepEqual(result.verification.ocrReadiness, {
+    modesTried: ['default', 'psm6', 'psm11'],
+    sparseFallbackAttempted: true,
+    spatialStrategy: 'word_cluster_chain_start_alignment_v4',
+    resolvedBy: 'psm11_spatial',
+    pollAttemptCount: 1,
+    ocrCallCount: 3,
+  });
+});
+
+test('capture readiness 由 default/PSM6 解決時只補一次 PSM11 content fallback', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-content-ocr-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const positive = ocrGeometryFixture.cases.find(
+    (fixture) => fixture.id === 'wrapped-target-with-adjacent-column',
+  );
+
+  for (const readinessStage of ['default', 'psm6']) {
+    const catalog = fixtureCatalog();
+    catalog.routes[0].contentTexts = positive.contentTexts;
+    const ocrCalls = [];
+    const result = await captureRoute(
+      catalog,
+      {
+        route: 'stock-health-check',
+        mode: 'test',
+        stockId: '2330',
+        stockName: '台積電',
+        udid,
+        output: path.join(tempDir, `${readinessStage}.png`),
+        manifest: path.join(tempDir, `${readinessStage}.json`),
+        confirmVipSession: true,
+      },
+      {
+        exec: syntheticCaptureExec(udid),
+        ocrLines: (_file, lang, options) => {
+          ocrCalls.push({ lang, options });
+          if (options?.psm === 11) return positive.sparseLines;
+          if (options?.psm === 6) return [syntheticOcrLine('2330')];
+          return [syntheticOcrLine(
+            readinessStage === 'default'
+              ? '綜合健檢 2330 台積電'
+              : '綜合健檢 台積電',
+          )];
+        },
+        now: () => new Date(2026, 7, 19),
+      },
+    );
+
+    assert.deepEqual(result.verification.contentTexts, {
+      expected: [...positive.contentTexts, '台積電'],
+      observed: [...positive.expectedContentMatched, '台積電'],
+      missing: ['相鄰內容'],
+    }, readinessStage);
+    assert.deepEqual(result.verification.ocrReadiness, {
+      modesTried: readinessStage === 'default'
+        ? ['default', 'psm11']
+        : ['default', 'psm6', 'psm11'],
+      sparseFallbackAttempted: true,
+      spatialStrategy: 'word_cluster_chain_start_alignment_v4',
+      resolvedBy: readinessStage,
+      pollAttemptCount: 1,
+      ocrCallCount: readinessStage === 'default' ? 2 : 3,
+    }, readinessStage);
+    assert.equal(
+      ocrCalls.filter((call) => call.options?.psm === 11).length,
+      1,
+      readinessStage,
+    );
+  }
+});
+
+test('capture 的 PSM11 adjacent-column fragments 不得通過且零發布', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-sparse-negative-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const output = path.join(tempDir, 'capture.png');
+  const manifest = path.join(tempDir, 'capture.json');
+  const ocrCalls = [];
+  const clockValues = [0, 0, 2000];
+  const negative = ocrGeometryFixture.cases.find(
+    (fixture) => fixture.id === 'wrong-tab-fragments-in-adjacent-columns',
+  );
+
+  await assert.rejects(
+    () => captureRoute(
+      featuredFixtureCatalog(),
+      {
+        route: 'featured-main-force',
+        mode: 'test',
+        udid,
+        output,
+        manifest,
+        timeoutMs: 1000,
+        pollMs: 250,
+        confirmVipSession: true,
+      },
+      {
+        exec: syntheticCaptureExec(udid),
+        ocrLines: (_file, lang, options) => {
+          ocrCalls.push({ lang, options });
+          return options?.psm === 11 ? negative.sparseLines : [syntheticOcrLine('精選')];
+        },
+        sleep: async () => {},
+        clock: () => clockValues.shift() ?? 2000,
+        now: () => new Date(2026, 7, 19),
+      },
+    ),
+    (error) => error instanceof CliError && error.code === 'expected_text_timeout',
+  );
+
+  assert.deepEqual(ocrCalls, [
+    { lang: 'chi_tra', options: undefined },
+    { lang: 'chi_tra', options: { psm: 6 } },
+    { lang: 'chi_tra', options: { psm: 11 } },
+  ]);
+  assert.equal(fs.existsSync(output), false);
+  assert.equal(fs.existsSync(manifest), false);
+});
+
+test('capture 的 PSM11 單一 TSV line 跨欄 words 不得通過且零發布', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-psm11-line-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const output = path.join(tempDir, 'capture.png');
+  const manifest = path.join(tempDir, 'capture.json');
+  const ocrCalls = [];
+  const clockValues = [0, 0, 2000];
+  const groupedAdjacentLine = geometryOcrLine([
+    { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
+    { t: '噴發', x: 260, y: 402, w: 72, h: 33 },
+  ]);
+  assert.equal(groupedAdjacentLine.text, '主力狂收噴發');
+
+  await assert.rejects(
+    () => captureRoute(
+      featuredFixtureCatalog(),
+      {
+        route: 'featured-main-force',
+        mode: 'test',
+        udid,
+        output,
+        manifest,
+        timeoutMs: 1000,
+        pollMs: 250,
+        confirmVipSession: true,
+      },
+      {
+        exec: syntheticCaptureExec(udid),
+        ocrLines: (_file, lang, options) => {
+          ocrCalls.push({ lang, options });
+          return options?.psm === 11
+            ? [groupedAdjacentLine]
+            : [syntheticOcrLine('精選')];
+        },
+        sleep: async () => {},
+        clock: () => clockValues.shift() ?? 2000,
+        now: () => new Date(2026, 7, 19),
+      },
+    ),
+    (error) => error instanceof CliError && error.code === 'expected_text_timeout',
+  );
+
+  assert.deepEqual(ocrCalls, [
+    { lang: 'chi_tra', options: undefined },
+    { lang: 'chi_tra', options: { psm: 6 } },
+    { lang: 'chi_tra', options: { psm: 11 } },
+  ]);
+  assert.equal(fs.existsSync(output), false);
+  assert.equal(fs.existsSync(manifest), false);
+});
+
+test('capture 的 PSM11 三行 stair-step fragments 不得通過且零發布', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-psm11-chain-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const output = path.join(tempDir, 'capture.png');
+  const manifest = path.join(tempDir, 'capture.json');
+  const ocrCalls = [];
+  const clockValues = [0, 0, 2000];
+
+  await assert.rejects(
+    () => captureRoute(
+      featuredFixtureCatalog(),
+      {
+        route: 'featured-main-force',
+        mode: 'test',
+        udid,
+        output,
+        manifest,
+        timeoutMs: 1000,
+        pollMs: 250,
+        confirmVipSession: true,
+      },
+      {
+        exec: syntheticCaptureExec(udid),
+        ocrLines: (_file, lang, options) => {
+          ocrCalls.push({ lang, options });
+          return options?.psm === 11
+            ? stairStepOcrLines()
+            : [syntheticOcrLine('精選')];
+        },
+        sleep: async () => {},
+        clock: () => clockValues.shift() ?? 2000,
+        now: () => new Date(2026, 7, 19),
+      },
+    ),
+    (error) => error instanceof CliError && error.code === 'expected_text_timeout',
+  );
+
+  assert.deepEqual(ocrCalls, [
+    { lang: 'chi_tra', options: undefined },
+    { lang: 'chi_tra', options: { psm: 6 } },
+    { lang: 'chi_tra', options: { psm: 11 } },
+  ]);
+  assert.equal(fs.existsSync(output), false);
+  assert.equal(fs.existsSync(manifest), false);
+});
+
+test('capture 的 default/PSM6 單一 TSV line 跨欄 fragments 不得通過且零發布', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-dense-negative-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const groupedAdjacentLine = geometryOcrLine([
+    { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
+    { t: '噴發', x: 260, y: 402, w: 72, h: 33 },
+  ]);
+  assert.equal(groupedAdjacentLine.text, '主力狂收噴發');
+
+  for (const stage of ['default', 'psm6']) {
+    const output = path.join(tempDir, `${stage}.png`);
+    const manifest = path.join(tempDir, `${stage}.json`);
+    const ocrCalls = [];
+    const clockValues = [0, 0, 2000];
+
+    await assert.rejects(
+      () => captureRoute(
+        featuredFixtureCatalog(),
+        {
+          route: 'featured-main-force',
+          mode: 'test',
+          udid,
+          output,
+          manifest,
+          timeoutMs: 1000,
+          pollMs: 250,
+          confirmVipSession: true,
+        },
+        {
+          exec: syntheticCaptureExec(udid),
+          ocrLines: (_file, lang, options) => {
+            ocrCalls.push({ lang, options });
+            if (options?.psm === 11) return [];
+            if (stage === 'default' && options === undefined) {
+              return [syntheticOcrLine('精選'), groupedAdjacentLine];
+            }
+            if (stage === 'psm6' && options?.psm === 6) return [groupedAdjacentLine];
+            return [syntheticOcrLine('精選')];
+          },
+          sleep: async () => {},
+          clock: () => clockValues.shift() ?? 2000,
+          now: () => new Date(2026, 7, 19),
+        },
+      ),
+      (error) => error instanceof CliError && error.code === 'expected_text_timeout',
+      stage,
+    );
+
+    assert.deepEqual(ocrCalls, [
+      { lang: 'chi_tra', options: undefined },
+      { lang: 'chi_tra', options: { psm: 6 } },
+      { lang: 'chi_tra', options: { psm: 11 } },
+    ], stage);
+    assert.equal(fs.existsSync(output), false, stage);
+    assert.equal(fs.existsSync(manifest), false, stage);
+  }
 });
 
 test('capture 只在 OCR 通過後寫入 PNG 與不含 token 的 manifest', async (t) => {
@@ -606,8 +1166,8 @@ test('capture 只在 OCR 通過後寫入 PNG 與不含 token 的 manifest', asyn
       ocrLines: (_file, lang, options) => {
         ocrCalls.push({ lang, options });
         return options?.psm === 6
-          ? [{ text: '台積賣 2330' }]
-          : [{ text: '綜合健檢與綜合評語' }];
+          ? [syntheticOcrLine('台積賣 2330')]
+          : [syntheticOcrLine('綜合健檢與綜合評語交易屬性健診台積電')];
       },
       sleep: async () => {},
       clock: () => (tick += 100),
@@ -635,8 +1195,8 @@ test('capture 只在 OCR 通過後寫入 PNG 與不含 token 的 manifest', asyn
   assert.equal(manifest.sourceVersion, 'fixture-v1');
   assert.deepEqual(manifest.verification.contentTexts, {
     expected: ['綜合評語', '交易屬性健診', '台積電'],
-    observed: ['綜合評語'],
-    missing: ['交易屬性健診', '台積電'],
+    observed: ['綜合評語', '交易屬性健診', '台積電'],
+    missing: [],
   });
   assert.equal(
     manifest.screenshot.sha256,
