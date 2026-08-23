@@ -744,11 +744,35 @@ function denseWordsAreContiguous(first, second) {
   return horizontalGap <= maxHorizontalGap;
 }
 
-function denseTextCandidates(line) {
+function denseClusterNode(words) {
+  const x = Math.min(...words.map((word) => word.x));
+  const y = Math.min(...words.map((word) => word.y));
+  const right = Math.max(...words.map((word) => word.x + word.w));
+  const bottom = Math.max(...words.map((word) => word.y + word.h));
+  return {
+    text: words.map((word) => word.text).join(''),
+    x,
+    y,
+    w: right - x,
+    h: bottom - y,
+  };
+}
+
+function denseWordClusters(line) {
   // Hand-authored tests may opt into text-only input explicitly. Runtime OCR always supplies
   // word boxes; missing or malformed production geometry must fail closed.
   if (line?.synthetic === true && line.words === undefined) {
-    return normalizeForMatch(line.text) ? [String(line.text)] : [];
+    if (!normalizeForMatch(line.text)) return [];
+    const node = { text: String(line.text) };
+    const values = ['x', 'y', 'w', 'h'].map((key) => Number(line?.[key]));
+    if (
+      values.every((value) => Number.isFinite(value)) &&
+      values[2] > 0 &&
+      values[3] > 0
+    ) {
+      [node.x, node.y, node.w, node.h] = values;
+    }
+    return [node];
   }
   if (!Array.isArray(line?.words) || line.words.length === 0) return [];
   const words = line.words.map(denseWordGeometry);
@@ -771,7 +795,11 @@ function denseTextCandidates(line) {
     }
   }
   clusters.push(cluster);
-  return clusters.map((items) => items.map((word) => word.text).join(''));
+  return clusters.map(denseClusterNode);
+}
+
+function denseTextCandidates(line) {
+  return denseWordClusters(line).map((cluster) => cluster.text);
 }
 
 function matchedExpectedTexts(lines, expectedTexts) {
@@ -793,7 +821,7 @@ const SPARSE_OCR_MAX_CHAIN_LINES = 3;
 const SPARSE_OCR_MAX_VERTICAL_GAP_HEIGHTS = 1.5;
 const SPARSE_OCR_MAX_VERTICAL_OVERLAP_HEIGHTS = 0.2;
 const SPARSE_OCR_MIN_HORIZONTAL_OVERLAP = 0.5;
-const SPARSE_OCR_SPATIAL_STRATEGY = 'same_column_vertical_adjacency_v2';
+const SPARSE_OCR_SPATIAL_STRATEGY = 'word_cluster_same_column_vertical_adjacency_v3';
 
 function sparseLineGeometry(line) {
   const values = ['x', 'y', 'w', 'h'].map((key) => Number(line?.[key]));
@@ -830,18 +858,22 @@ function isNextSparseLine(first, second) {
 }
 
 function sparseTextCandidates(lines) {
-  // PSM11 intentionally keeps fragments sparse. Only build short downward chains that retain
-  // strong column overlap; never flatten the whole screen into one matchable string.
+  // PSM11 may still group separate columns into one TSV line. Normalize every line into the same
+  // bounded word clusters used by dense OCR, then treat those cluster boxes as the only atomic
+  // candidates for short downward chains. Never seed a candidate from raw line.text.
   const ordered = lines
-    .map((line, index) => ({ ...line, index, text: String(line?.text || '') }))
-    .filter((line) => normalizeForMatch(line.text))
+    .flatMap((line, lineIndex) =>
+      denseWordClusters(line).map((cluster, clusterIndex) => ({
+        ...cluster,
+        nodeId: `${lineIndex}:${clusterIndex}`,
+      })),
+    )
+    .filter((line) => normalizeForMatch(line.text) && sparseLineGeometry(line))
     .sort((first, second) => {
       const firstBox = sparseLineGeometry(first);
       const secondBox = sparseLineGeometry(second);
-      if (!firstBox && !secondBox) return first.index - second.index;
-      if (!firstBox) return 1;
-      if (!secondBox) return -1;
-      return firstBox.y - secondBox.y || firstBox.x - secondBox.x || first.index - second.index;
+      return firstBox.y - secondBox.y || firstBox.x - secondBox.x ||
+        first.nodeId.localeCompare(second.nodeId);
     });
   const candidates = new Set(ordered.map((line) => line.text));
 
@@ -851,14 +883,17 @@ function sparseTextCandidates(lines) {
     let combined = start.text;
     for (let depth = 1; depth < SPARSE_OCR_MAX_CHAIN_LINES; depth += 1) {
       const next = ordered
-        .filter((candidate) => candidate.index !== current.index && isNextSparseLine(current, candidate))
+        .filter((candidate) =>
+          candidate.nodeId !== current.nodeId && isNextSparseLine(current, candidate),
+        )
         .sort((first, second) => {
           const firstBox = sparseLineGeometry(first);
           const secondBox = sparseLineGeometry(second);
           const currentBox = sparseLineGeometry(current);
           const firstGap = firstBox.y - (currentBox.y + currentBox.h);
           const secondGap = secondBox.y - (currentBox.y + currentBox.h);
-          return firstGap - secondGap || firstBox.x - secondBox.x || first.index - second.index;
+          return firstGap - secondGap || firstBox.x - secondBox.x ||
+            first.nodeId.localeCompare(second.nodeId);
         })[0];
       if (!next) break;
       combined += next.text;

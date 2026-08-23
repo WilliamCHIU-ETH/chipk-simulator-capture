@@ -7,14 +7,14 @@
       "expectedTexts": ["主力狂收噴發"],
       "contentTexts": ["主力買賣超", "相鄰內容"],
       "sparseLines": [
-        { "text": "主力狂收", "x": 24, "y": 400, "w": 150, "h": 35 },
-        { "text": "產業龍頭", "x": 226, "y": 417, "w": 140, "h": 34 },
-        { "text": "噴發", "x": 63, "y": 447, "w": 72, "h": 35 },
-        { "text": "主力", "x": 526, "y": 600, "w": 70, "h": 51 },
-        { "text": "其他排行", "x": 226, "y": 617, "w": 140, "h": 34 },
-        { "text": "買賣超（張）了", "x": 475, "y": 646, "w": 206, "h": 35 },
-        { "text": "相鄰", "x": 24, "y": 800, "w": 72, "h": 35 },
-        { "text": "內容", "x": 226, "y": 817, "w": 72, "h": 35 }
+        { "text": "主力狂收", "synthetic": true, "x": 24, "y": 400, "w": 150, "h": 35 },
+        { "text": "產業龍頭", "synthetic": true, "x": 226, "y": 417, "w": 140, "h": 34 },
+        { "text": "噴發", "synthetic": true, "x": 63, "y": 447, "w": 72, "h": 35 },
+        { "text": "主力", "synthetic": true, "x": 526, "y": 600, "w": 70, "h": 51 },
+        { "text": "其他排行", "synthetic": true, "x": 226, "y": 617, "w": 140, "h": 34 },
+        { "text": "買賣超（張）了", "synthetic": true, "x": 475, "y": 646, "w": 206, "h": 35 },
+        { "text": "相鄰", "synthetic": true, "x": 24, "y": 800, "w": 72, "h": 35 },
+        { "text": "內容", "synthetic": true, "x": 226, "y": 817, "w": 72, "h": 35 }
       ],
       "expectedMatched": ["主力狂收噴發"],
       "expectedContentMatched": ["主力買賣超"]
@@ -23,8 +23,8 @@
       "id": "wrong-tab-fragments-in-adjacent-columns",
       "expectedTexts": ["主力狂收噴發"],
       "sparseLines": [
-        { "text": "主力狂收", "x": 24, "y": 400, "w": 150, "h": 35 },
-        { "text": "噴發", "x": 226, "y": 417, "w": 72, "h": 35 }
+        { "text": "主力狂收", "synthetic": true, "x": 24, "y": 400, "w": 150, "h": 35 },
+        { "text": "噴發", "synthetic": true, "x": 226, "y": 417, "w": 72, "h": 35 }
       ],
       "expectedMatched": []
     },
@@ -32,8 +32,8 @@
       "id": "wrong-tab-fragments-too-far-apart",
       "expectedTexts": ["主力狂收噴發"],
       "sparseLines": [
-        { "text": "主力狂收", "x": 24, "y": 400, "w": 150, "h": 35 },
-        { "text": "噴發", "x": 63, "y": 560, "w": 72, "h": 35 }
+        { "text": "主力狂收", "synthetic": true, "x": 24, "y": 400, "w": 150, "h": 35 },
+        { "text": "噴發", "synthetic": true, "x": 63, "y": 560, "w": 72, "h": 35 }
       ],
       "expectedMatched": []
     },
@@ -41,8 +41,8 @@
       "id": "wrong-tab-fragments-overlap-beyond-tolerance",
       "expectedTexts": ["主力買賣超"],
       "sparseLines": [
-        { "text": "主力", "x": 24, "y": 400, "w": 70, "h": 51 },
-        { "text": "買賣超", "x": 12, "y": 443, "w": 206, "h": 35 }
+        { "text": "主力", "synthetic": true, "x": 24, "y": 400, "w": 70, "h": 51 },
+        { "text": "買賣超", "synthetic": true, "x": 12, "y": 443, "w": 206, "h": 35 }
       ],
       "expectedMatched": []
     }

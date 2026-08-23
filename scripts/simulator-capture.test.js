@@ -652,6 +652,51 @@ test('default/PSM6 OCR 只匹配有 geometry 的同列連續 word clusters', () 
   );
 });
 
+test('PSM11 只以有 bounding box 的 word clusters 作單行與垂直 wrapped 候選', () => {
+  const oneWord = geometryOcrLine([
+    { t: '精選', x: 24, y: 300, w: 72, h: 35 },
+  ]);
+  const contiguous = geometryOcrLine([
+    { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
+    { t: '噴發', x: 181, y: 402, w: 72, h: 33 },
+  ]);
+  const wrapped = [
+    geometryOcrLine([{ t: '主力狂收', x: 24, y: 500, w: 150, h: 35 }]),
+    geometryOcrLine([{ t: '噴發', x: 63, y: 547, w: 72, h: 35 }]),
+  ];
+  const groupedAdjacentColumns = geometryOcrLine([
+    { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
+    { t: '噴發', x: 260, y: 402, w: 72, h: 33 },
+  ]);
+
+  assert.deepEqual(
+    matchedSparseExpectedTexts([oneWord, contiguous], ['精選', '主力狂收噴發']),
+    { matched: ['精選', '主力狂收噴發'], missing: [] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts(wrapped, ['主力狂收噴發']),
+    { matched: ['主力狂收噴發'], missing: [] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts([groupedAdjacentColumns], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts([{ text: '主力狂收噴發' }], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts([syntheticOcrLine('主力狂收噴發')], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+  assert.deepEqual(
+    matchedSparseExpectedTexts([
+      { text: '主力狂收噴發', words: [{ t: '主力狂收噴發', x: 24, y: 400, w: 0, h: 35 }] },
+    ], ['主力狂收噴發']),
+    { matched: [], missing: ['主力狂收噴發'] },
+  );
+});
+
 test('default/PSM6 OCR 每個 expected text 只在單一 line 內匹配', () => {
   const negative = ocrGeometryFixture.cases.find(
     (fixture) => fixture.id === 'wrong-tab-fragments-in-adjacent-columns',
@@ -772,7 +817,7 @@ test('capture 單次 PSM11 驗 wrapped readiness/content 且拒絕 adjacent-colu
   assert.deepEqual(result.verification.ocrReadiness, {
     modesTried: ['default', 'psm6', 'psm11'],
     sparseFallbackAttempted: true,
-    spatialStrategy: 'same_column_vertical_adjacency_v2',
+    spatialStrategy: 'word_cluster_same_column_vertical_adjacency_v3',
     resolvedBy: 'psm11_spatial',
     pollAttemptCount: 1,
     ocrCallCount: 3,
@@ -829,7 +874,7 @@ test('capture readiness 由 default/PSM6 解決時只補一次 PSM11 content fal
         ? ['default', 'psm11']
         : ['default', 'psm6', 'psm11'],
       sparseFallbackAttempted: true,
-      spatialStrategy: 'same_column_vertical_adjacency_v2',
+      spatialStrategy: 'word_cluster_same_column_vertical_adjacency_v3',
       resolvedBy: readinessStage,
       pollAttemptCount: 1,
       ocrCallCount: readinessStage === 'default' ? 2 : 3,
@@ -872,6 +917,58 @@ test('capture 的 PSM11 adjacent-column fragments 不得通過且零發布', asy
         ocrLines: (_file, lang, options) => {
           ocrCalls.push({ lang, options });
           return options?.psm === 11 ? negative.sparseLines : [syntheticOcrLine('精選')];
+        },
+        sleep: async () => {},
+        clock: () => clockValues.shift() ?? 2000,
+        now: () => new Date(2026, 7, 19),
+      },
+    ),
+    (error) => error instanceof CliError && error.code === 'expected_text_timeout',
+  );
+
+  assert.deepEqual(ocrCalls, [
+    { lang: 'chi_tra', options: undefined },
+    { lang: 'chi_tra', options: { psm: 6 } },
+    { lang: 'chi_tra', options: { psm: 11 } },
+  ]);
+  assert.equal(fs.existsSync(output), false);
+  assert.equal(fs.existsSync(manifest), false);
+});
+
+test('capture 的 PSM11 單一 TSV line 跨欄 words 不得通過且零發布', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-psm11-line-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  const output = path.join(tempDir, 'capture.png');
+  const manifest = path.join(tempDir, 'capture.json');
+  const ocrCalls = [];
+  const clockValues = [0, 0, 2000];
+  const groupedAdjacentLine = geometryOcrLine([
+    { t: '主力狂收', x: 24, y: 400, w: 150, h: 35 },
+    { t: '噴發', x: 260, y: 402, w: 72, h: 33 },
+  ]);
+  assert.equal(groupedAdjacentLine.text, '主力狂收噴發');
+
+  await assert.rejects(
+    () => captureRoute(
+      featuredFixtureCatalog(),
+      {
+        route: 'featured-main-force',
+        mode: 'test',
+        udid,
+        output,
+        manifest,
+        timeoutMs: 1000,
+        pollMs: 250,
+        confirmVipSession: true,
+      },
+      {
+        exec: syntheticCaptureExec(udid),
+        ocrLines: (_file, lang, options) => {
+          ocrCalls.push({ lang, options });
+          return options?.psm === 11
+            ? [groupedAdjacentLine]
+            : [syntheticOcrLine('精選')];
         },
         sleep: async () => {},
         clock: () => clockValues.shift() ?? 2000,
