@@ -32,6 +32,46 @@ npm ci
 npm run preflight
 ```
 
+## Blank-session environment doctor
+
+Configure one local ignored machine profile once, after a human has verified the standalone
+release installation, full Xcode path, and exact dedicated test Simulator:
+
+```bash
+npm run machine:configure -- \
+  --provider-bin /absolute/stable-runtime/chipk-v0.3.0/bin/chipk-capture.js \
+  --developer-dir /Applications/Xcode.app/Contents/Developer \
+  --udid <EXACT-DEDICATED-UDID> \
+  --confirm-dedicated-machine-role
+```
+
+The command writes `.runtime/machine-profile.json` with mode `0600`, atomically, and refuses to
+overwrite an existing profile. It stores only machine identity. It rejects authorization,
+dedicated-run, and VIP-session attestations.
+
+Thereafter a new shell needs no exports or path guessing:
+
+```bash
+npm run --silent machine:doctor
+```
+
+The doctor is side-effect-free: it probes the pinned Provider identity, exact release commit,
+configured `DEVELOPER_DIR`, `simctl`, and the exact available/Booted Simulator. It never opens or
+launches the App, creates an acquisition, or writes a Run. `READY` means only the Simulator
+environment is ready; current-run authorization and session evidence remain human gates.
+
+When one exact acquisition has fresh approval, the operator launcher reruns the same doctor and
+turns explicit flags into child-process-only environment attestations:
+
+```bash
+node bin/chipk-capture-machine.js acquire \
+  --request /absolute/request.json \
+  --authorize-run --confirm-dedicated --confirm-vip-session --json
+```
+
+See `docs/blank-session-environment.md` for installation choices, typed blockers, and evidence
+boundaries.
+
 The tests exercise the full route, recipe, runtime orchestration, atomic-publication, and JSON
 adapter logic with injected local fakes. They do not operate a Simulator or create tracked media.
 
@@ -41,10 +81,10 @@ Each release has one identity across `package.json`, `capabilities.toolVersion`,
 Git tag `v<version>`. A consumer pins the exact tag and resolved commit; a floating branch or an
 unversioned executable found on `PATH` is not a reproducible installation.
 
-After `v0.2.0` is published:
+For a stable release installation (replace the version only after updating the compatibility lock):
 
 ```bash
-git clone --branch v0.2.0 --depth 1 \
+git clone --branch v0.3.0 --depth 1 \
   https://github.com/WilliamCHIU-ETH/chipk-simulator-capture.git
 cd chipk-simulator-capture
 npm ci

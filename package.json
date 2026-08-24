@@ -8,6 +8,7 @@
   },
   "bin": {
     "chipk-capture": "bin/chipk-capture.js",
+    "chipk-capture-machine": "bin/chipk-capture-machine.js",
     "chipk-refresh-catalog": "bin/chipk-refresh-catalog.js"
   },
   "scripts": {
@@ -19,6 +20,8 @@
     "coverage:source": "node scripts/simulator-coverage.js report --json",
     "release:gate:v0.2.1": "node scripts/release-gate.js check --target 0.2.1 --json",
     "refresh:catalog": "node bin/chipk-refresh-catalog.js",
+    "machine:doctor": "node bin/chipk-capture-machine.js doctor --json",
+    "machine:configure": "node bin/chipk-capture-machine.js configure",
     "scan:source-only": "node test/sanitized-tree-check.js",
     "scan:sanitized": "npm run scan:source-only",
     "preflight": "npm test && npm run check && npm run scan:source-only"

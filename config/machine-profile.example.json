@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "provider": {
+    "executable": "/absolute/standalone/release-clone/bin/chipk-capture.js",
+    "expectedId": "chipk-simulator-capture",
+    "expectedVersion": "0.3.0",
+    "expectedCommit": "586fbe7414ab0c25d78ae6e462887fe72030e0a7",
+    "installationKind": "immutable-release-clone"
+  },
+  "xcode": {
+    "developerDir": "/Applications/Xcode.app/Contents/Developer"
+  },
+  "simulator": {
+    "udid": "00000000-0000-0000-0000-000000000000",
+    "role": "dedicated-test-simulator"
+  }
+}

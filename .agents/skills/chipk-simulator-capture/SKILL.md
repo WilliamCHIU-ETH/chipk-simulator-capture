@@ -52,6 +52,14 @@ Do not silently downgrade `live` to `test`.
 
 ## Environment handoff
 
+- In a new shell, run `npm run --silent machine:doctor` before any Simulator-dependent workflow. Treat
+  `READY` as environment-only readiness and any typed blocker as the exact human handoff. Do not
+  replace this with manual exports, a guessed executable, `booted`, or global `xcode-select`.
+- The local machine profile may persist only the pinned Provider installation, full-Xcode
+  developer directory, exact UDID, and dedicated machine role. Current-run authorization,
+  dedicated-device confirmation, and VIP-session confirmation must be supplied again for the
+  exact acquisition invocation and passed only to its child process.
+
 - Before actual Simulator work, determine whether the device, App, and approved session are usable enough for the requested capture. Do not equate a successful tool preflight with a verified login or VIP session.
 - When an observed environment problem blocks capture, you may infer likely causes and label them as inference. Never turn an inference into permission to enter credentials, handle MFA/CAPTCHA, change authentication/domain/security settings, operate a non-test account, or bypass access controls. The known iOS prompt `要在籌碼K線中打開此網頁嗎？` after a reviewed ChipK Deep Link is ordinary navigation in `test`; tap `打開` automatically. Inspect other product UI before classifying it as a gate.
 - Once the user authorizes capture on one exact approved dedicated test Simulator, that authorization also covers read-only diagnostic screenshots and local OCR of its current product screen after a navigation or readiness failure. Keep those diagnostics in ignored `.runtime/`, never publish them, and do not ask for a second permission merely because the approved session is logged in. This does not authorize reading or reporting secure text-field values, entering credentials, or proceeding through login, MFA, or CAPTCHA; stop if one of those screens is encountered.
