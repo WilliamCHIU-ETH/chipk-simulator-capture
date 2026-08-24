@@ -48,6 +48,14 @@ chipk-capture capabilities --json
 chipk-capture acquire --request <absolute-json-file> --json
 ```
 
+`chipk-capture-machine doctor --json` is the canonical side-effect-free operator environment
+probe. It is control-plane tooling, not a third MaterialAcquisitionPort operation. The optional
+machine launcher may call `acquire` only after doctor is READY and the current invocation supplies
+explicit acquisition authorization. It automatically rechecks the dedicated device and delegates
+VIP truth only to a clean pinned Provider that advertises fail-closed verification before any
+mutation. An older Provider without that capability must return typed human action before acquire;
+the launcher must never persist authorization/session claims or synthesize unsupported proof.
+
 Request/Result v1 and v2 are separate closed schemas under `contracts/`. Artifact paths in a result
 are POSIX paths relative to the caller-owned `outputDirectory`; absolute artifact paths never cross
 the Port. For video workflows, the canonical consumer default is the advertised v2

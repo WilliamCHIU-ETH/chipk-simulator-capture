@@ -52,6 +52,17 @@ Do not silently downgrade `live` to `test`.
 
 ## Environment handoff
 
+- In a new shell, run `npm run --silent machine:doctor` before any Simulator-dependent workflow. Treat
+  `READY` as environment-only readiness and any typed blocker as the exact human handoff. Do not
+  replace this with manual exports, a guessed executable, `booted`, or global `xcode-select`.
+- The local machine profile may persist only the pinned Provider installation, full-Xcode
+  developer directory, exact UDID, and dedicated machine role. Configure it once and reuse it.
+  Every acquisition still needs explicit run authorization; the launcher automatically rechecks
+  dedicated identity. VIP verification may be delegated only when clean pinned Provider code
+  advertises `runReadiness.vipSession=verified_before_mutation`; otherwise fail closed before
+  acquire/openurl with typed human action. Never treat optional post-navigation content OCR as
+  pre-mutation proof, persist authorization, or synthesize a VIP-session claim.
+
 - Before actual Simulator work, determine whether the device, App, and approved session are usable enough for the requested capture. Do not equate a successful tool preflight with a verified login or VIP session.
 - When an observed environment problem blocks capture, you may infer likely causes and label them as inference. Never turn an inference into permission to enter credentials, handle MFA/CAPTCHA, change authentication/domain/security settings, operate a non-test account, or bypass access controls. The known iOS prompt `要在籌碼K線中打開此網頁嗎？` after a reviewed ChipK Deep Link is ordinary navigation in `test`; tap `打開` automatically. Inspect other product UI before classifying it as a gate.
 - Once the user authorizes capture on one exact approved dedicated test Simulator, that authorization also covers read-only diagnostic screenshots and local OCR of its current product screen after a navigation or readiness failure. Keep those diagnostics in ignored `.runtime/`, never publish them, and do not ask for a second permission merely because the approved session is logged in. This does not authorize reading or reporting secure text-field values, entering credentials, or proceeding through login, MFA, or CAPTCHA; stop if one of those screens is encountered.
@@ -116,9 +127,11 @@ The expected persona role is VIP. Actual identifiers and secure-store locators b
 ignored `.runtime/personas.local.json`; Git contains only `config/personas.example.json` and
 `contracts/personas.schema.json`. Never place a real login identifier, password, token, cookie,
 recovery code, locator, or
-session value in source, stdout, a manifest, or shell history. The `--confirm-vip-session` capture
-flag and `CHIPK_VIP_SESSION_CONFIRMED=1` stable adapter setting are caller attestations, not machine
-login checks.
+session value in source, stdout, a manifest, or shell history. Direct helper
+`--confirm-vip-session` and v0.3.0 `CHIPK_VIP_SESSION_CONFIRMED=1` remain legacy gates, not login
+proof. The machine launcher supplies the child-only compatibility value after environment doctor;
+only a pinned Provider with the reviewed pre-mutation capability may receive it. v0.3.0 lacks that
+capability, so the launcher must block before acquire rather than fall back to this legacy flag.
 
 If the approved session is already active, do not log in again. A cold App launch invokes the App's native `autoLogin`; this is different from an agent entering credentials. The currently verified workflow does not automate credential entry. For an allowlisted read-only Deep Link, the target page itself is sufficient session evidence when the intended page/stock texts are visible and the login submit control is absent; do not require a particular home screen first. If native auto-login does not establish the approved session or the Deep Link lands on login, pause session recovery and capture, report likely causes as inference, and hand off the login step to the user according to **Environment handoff**.
 

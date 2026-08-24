@@ -32,6 +32,56 @@ npm ci
 npm run preflight
 ```
 
+## Blank-session environment doctor
+
+Configure one local ignored machine profile once, after a human has verified the standalone
+release installation, full Xcode path, and exact dedicated test Simulator:
+
+```bash
+npm run machine:configure -- \
+  --provider-bin /absolute/stable-runtime/chipk-v0.3.0/bin/chipk-capture.js \
+  --developer-dir /Applications/Xcode.app/Contents/Developer \
+  --udid <EXACT-DEDICATED-UDID> \
+  --confirm-dedicated-machine-role
+```
+
+The command writes `.runtime/machine-profile.json` with mode `0600`, atomically, and refuses to
+overwrite an existing profile. It stores only machine identity. It rejects authorization,
+dedicated-run, and VIP-session attestations.
+
+Thereafter a new shell needs no exports or path guessing:
+
+```bash
+npm run --silent machine:doctor
+```
+
+The doctor is side-effect-free: it probes the pinned Provider identity, exact release commit,
+configured `DEVELOPER_DIR`, `simctl`, and the exact available/Booted Simulator. It never opens or
+launches the App, creates an acquisition, or writes a Run. `READY` means only the Simulator
+environment is ready. Each acquisition still requires explicit authorization and dedicated-device
+identity is rechecked automatically. A compatible Provider must automatically validate approved
+VIP session evidence before mutation; missing capability or inconsistent evidence returns
+`human_action_required`.
+
+The launcher requires the pinned Provider to advertise
+`runReadiness.vipSession=verified_before_mutation` before it injects the legacy v0.3 session gate
+or starts `acquire`. The current v0.3.0 release does not advertise that capability, so authorized
+acquisition fails closed with `PROVIDER_VIP_SESSION_PREFLIGHT_REQUIRED` before child execution or
+`simctl openurl`. A future reviewed Provider must implement and advertise the capability; the
+launcher does not substitute optional post-navigation OCR as proof.
+
+When one exact acquisition has fresh approval, the operator launcher reruns the same doctor and
+turns explicit flags into child-process-only environment attestations:
+
+```bash
+node bin/chipk-capture-machine.js acquire \
+  --request /absolute/request.json \
+  --authorize-run --json
+```
+
+See `docs/blank-session-environment.md` for installation choices, typed blockers, and evidence
+boundaries.
+
 The tests exercise the full route, recipe, runtime orchestration, atomic-publication, and JSON
 adapter logic with injected local fakes. They do not operate a Simulator or create tracked media.
 
@@ -41,10 +91,10 @@ Each release has one identity across `package.json`, `capabilities.toolVersion`,
 Git tag `v<version>`. A consumer pins the exact tag and resolved commit; a floating branch or an
 unversioned executable found on `PATH` is not a reproducible installation.
 
-After `v0.2.0` is published:
+For a stable release installation (replace the version only after updating the compatibility lock):
 
 ```bash
-git clone --branch v0.2.0 --depth 1 \
+git clone --branch v0.3.0 --depth 1 \
   https://github.com/WilliamCHIU-ETH/chipk-simulator-capture.git
 cd chipk-simulator-capture
 npm ci
@@ -144,8 +194,13 @@ export CHIPK_DEDICATED_SIMULATOR_CONFIRMED=1
 export CHIPK_VIP_SESSION_CONFIRMED=1
 ```
 
-These are runtime selection and attestations, not credentials. Missing values return a typed
-`human_action_required` result and publish nothing. `productionReady: true` in capabilities means
+These are v0.3.0 runtime selection and compatibility gates, not credentials. The machine launcher
+derives the exact device gate from the verified profile, but supplies the legacy session flag only
+when clean pinned Provider code advertises pre-mutation, fail-closed VIP verification. v0.3.0 does
+not, so its machine-launched acquisition is blocked before execution. Operators provide only
+explicit acquisition authorization; they are not asked for a replacement VIP attestation.
+Missing or inconsistent runtime evidence returns a typed `human_action_required` result and
+publishes nothing. `productionReady: true` in capabilities means
 the reviewed catalog and runtime operations ship together; it does not claim that the current
 device, App, session, OCR, or Maestro environment is ready.
 
