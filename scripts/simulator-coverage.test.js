@@ -36,9 +36,9 @@ test('source coverage truth keeps readiness text, content, recipes, and runtime 
     ratio: 1,
   });
   assert.deepEqual(report.summary.contentTextCandidates, {
-    numerator: 2,
+    numerator: 3,
     denominator: 40,
-    ratio: 0.05,
+    ratio: 0.075,
   });
   assert.deepEqual(report.summary.interactionRecipeRoutes, {
     numerator: 1,
@@ -66,6 +66,9 @@ test('missing explicit Accessibility identifiers do not claim Accessibility is u
   const featured = report.routes.find(
     (route) => route.routeId === 'chipk.select.featured-main-force',
   );
+  const stockMainForce = report.routes.find(
+    (route) => route.routeId === 'chipk.stock.main-force',
+  );
 
   assert.equal(kline.interactionRecipeCoverage.status, 'recipe_present');
   assert.deepEqual(kline.interactionRecipeCoverage.recipeIds, [
@@ -79,6 +82,7 @@ test('missing explicit Accessibility identifiers do not claim Accessibility is u
   );
   assert.equal(kline.accessibilityIdentity.runtimeAvailability, 'unknown_not_observed');
   assert.deepEqual(featured.contentTextCandidate.contentTexts, ['主力買賣超']);
+  assert.deepEqual(stockMainForce.contentTextCandidate.contentTexts, ['買賣家數差']);
   assert.equal(featured.navigationReadinessTextCandidate.uniqueRouteIdentity, false);
   assert.equal(featured.runtimeVerification.status, 'not_claimed_by_source');
   assert.equal(featured.runtimeVerification.verified, null);

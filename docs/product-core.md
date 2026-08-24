@@ -1,7 +1,7 @@
 # Product core and responsibility
 
-Status: accepted product direction. Contract v1 remains the current implementation contract;
-prepared mobile output requires a separately reviewed contract and compatibility migration.
+Status: accepted product direction. Contract v1 remains unchanged for screenshots and raw
+recordings. Contract v2 implements one reviewed ready-to-place screenshot-state vertical slice.
 
 ## Product core
 
@@ -36,7 +36,7 @@ ChipK Simulator Capture owns:
 - screenshot and interaction recording, readiness checks, and material evidence;
 - ChipK-specific action semantics and phone-local presentation, including focus regions, gesture
   emphasis, zoom/pan intent, hold timing, and safe phone framing;
-- rendering and encoding future prepared phone clips, together with their raw inputs, actions,
+- rendering and encoding prepared phone clips, together with their raw inputs, actions,
   media metadata, hashes, and provenance;
 - versioned catalogs, recipes, presentation profiles, the provider-side CLI/JSON contract, and
   provider tests.
@@ -66,13 +66,13 @@ A Capture feature belongs in this product only when it materially improves at le
 Enabling infrastructure is in scope when it protects one of those outcomes. Project/timeline
 management, generic editing, final-scene storytelling, and final delivery remain out of scope.
 
-## Current v1 and the v2 gate
+## Current v1 and v2 boundary
 
 Request/Result v1 are closed and currently publish only screenshots or raw recordings with actions
 and manifests. V1 does not advertise or imply prepared-video support, and its existing artifact
 roles must not be overloaded with new semantics.
 
-A future contract may advertise prepared mobile output only after it defines and verifies:
+Contract v2 may advertise prepared mobile output only when it defines and verifies:
 
 - versioned presentation-profile selection and capability discovery;
 - prepared and raw artifact roles plus their provenance relationship;
@@ -80,5 +80,11 @@ A future contract may advertise prepared mobile output only after it defines and
 - unsupported-profile, fallback, failure, and atomic-publication behavior;
 - provider and Marketing Video compatibility tests across the version boundary.
 
-Until those gates pass, `touchPoint`, `touchPath`, and `zoomFocus` remain provider-owned preparation
-semantics carried by the current raw recording bundle, not proof that a prepared clip exists.
+The current v2 implementation passes these gates only for
+`chipk.stock-main-force-portrait.v1`, route `chipk.stock.main-force`, and stock `3441`. It captures a
+fresh screenshot, requires route-specific `主力買賣超` readiness plus usable `買賣家數差`
+content, renders a five-second 30fps H.264 clip with no invented interactions, and atomically
+publishes the prepared video, source PNG, capture manifest, presentation plan, and preparation
+manifest. Other routes, stocks, profiles, or raw interaction recordings remain unsupported by v2
+and fail closed. `touchPoint`, `touchPath`, and `zoomFocus` in v1 raw recordings are still not proof
+that a prepared clip exists.

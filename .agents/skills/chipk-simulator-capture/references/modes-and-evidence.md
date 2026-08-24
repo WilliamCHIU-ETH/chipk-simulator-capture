@@ -40,6 +40,15 @@ Prefer stable, meaningful text over elapsed time. A useful readiness result reco
 
 OCR can be imperfect. Use tolerant text matching, retain the OCR evidence, and use human review when the only miss may be OCR noise. Do not weaken all checks to make one flaky screen pass.
 
+For the stable `chipk.stock.main-force` / `3441` prepared-video slice, publication requires all of:
+
+- readiness: `主力`, `主力買賣超`, and exact stock ID `3441`;
+- usable content: `買賣家數差` and the reviewed stock name `聯一光`;
+- a capture manifest whose expected, observed, and missing content arrays agree with the plan.
+
+This is stricter than a v1 screenshot being captured. A missing content observation publishes no
+v2 bundle.
+
 For `chipk.stock.health-check`, the current reviewed evidence is:
 
 - stock: `2330` / `台積電`;

@@ -1,20 +1,20 @@
 ---
 name: chipk-simulator-capture
-description: "Turn Traditional Chinese marketing copy into audited ChipK iOS Simulator route plans and, when explicitly authorized, verified screenshots. Use for 籌碼K線 Deep Link selection, live or historical-script test mode, QA Simulator preflight, VIP-screen capture, catalog refresh, or screenshot evidence review."
+description: "Turn Traditional Chinese marketing copy into audited ChipK iOS Simulator route plans and, when explicitly authorized, verified screenshots or ready-to-place phone material. Use for 籌碼K線 Deep Link selection, live or historical-script test mode, QA Simulator preflight, VIP-screen capture, prepared-video delivery, catalog refresh, or screenshot evidence review."
 ---
 
 # ChipK Simulator Capture
 
-Create reproducible phone-screen material through the current v1 chain:
+Create reproducible phone-screen material through the versioned chain:
 
-`copy → ranked route IDs → explicit plan → exact Simulator → route/content checks → PNG or raw interaction recording + evidence manifests`
+`copy → ranked route IDs → explicit plan → exact Simulator → route/content checks → v1 evidence material or v2 ready-to-place bundle`
 
 This skill owns screen acquisition and ChipK-specific phone-presentation semantics. The accepted
-Product Core in `docs/product-core.md` assigns future prepared mobile output to this provider, while
+Product Core in `docs/product-core.md` assigns prepared mobile output to this provider, while
 Marketing Video owns Project/Revision/Timeline, narrative, scene-level composition, final render,
-and delivery. Current Contract v1 does not publish prepared video: do not claim that zoom, pan,
-gesture emphasis, or phone framing has been rendered until an active versioned contract advertises
-and verifies that capability.
+and delivery. Contract v1 does not publish prepared video. Contract v2 currently advertises only
+the reviewed `chipk.stock.main-force` / `3441` screenshot-state profile; do not generalize that
+capability to another route, stock, profile, or interaction recording.
 
 ## Start here
 
@@ -31,8 +31,15 @@ chipk-capture capabilities --json
 chipk-capture acquire --request <absolute-json-file> --json
 ```
 
-The helper commands below are provider-local planning and diagnostic tools, not an alternative
-consumer Port.
+For a video workflow, default to the advertised v2 `prepared-video` operation so Marketing Video
+can place the returned MP4 without modifying its phone-local content. Never replace that path with
+a direct helper plus manual asset ingest. The helper commands below are provider-local planning and
+diagnostic tools, not an alternative consumer Port. If v2 does not advertise the requested route,
+stock, or profile, fail closed instead of silently returning v1 raw material.
+
+This delivery default does not authorize Simulator mutation. An actual v2 call captures a fresh
+screenshot and therefore still requires explicit authorization in the current user request, the
+exact-device configuration, and all existing run/session attestations.
 
 Read [modes-and-evidence.md](references/modes-and-evidence.md) when deciding mode, readiness, or success. Read [source-contract.md](references/source-contract.md) when refreshing sources or resolving a Sheet/Builder/iOS conflict. Read [ios-runtime-contract.md](references/ios-runtime-contract.md) before build, install, or Simulator work. Read [session-and-login.md](references/session-and-login.md) before checking or restoring an approved QA session. Read [recording-and-gestures.md](references/recording-and-gestures.md) only when the request includes Simulator gestures or raw video recording.
 

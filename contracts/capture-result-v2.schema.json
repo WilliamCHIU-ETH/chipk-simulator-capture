@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/chipk-capture/result-v2.json",
+  "title": "ChipK Capture Result v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "requestId", "provider", "status", "artifacts", "evidence", "error"],
+  "properties": {
+    "contractVersion": { "const": 2 },
+    "requestId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "toolVersion"],
+      "properties": {
+        "id": { "const": "chipk-simulator-capture" },
+        "toolVersion": { "type": "string", "pattern": ".*\\S.*" }
+      }
+    },
+    "status": { "enum": ["completed", "rejected", "failed", "human_action_required"] },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "evidence": { "type": "object" },
+    "error": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "type": "string", "pattern": ".*\\S.*" },
+        "message": { "type": "string", "pattern": ".*\\S.*" },
+        "retryable": { "type": "boolean" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "completed" } } },
+      "then": {
+        "properties": {
+          "artifacts": {
+            "minItems": 5,
+            "maxItems": 5,
+            "allOf": [
+              {
+                "contains": {
+                  "type": "object",
+                  "required": ["role"],
+                  "properties": { "role": { "const": "prepared-video" } }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "required": ["role"],
+                  "properties": { "role": { "const": "screenshot" } }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "required": ["role"],
+                  "properties": { "role": { "const": "capture-manifest" } }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "required": ["role"],
+                  "properties": { "role": { "const": "presentation-plan" } }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              },
+              {
+                "contains": {
+                  "type": "object",
+                  "required": ["role"],
+                  "properties": { "role": { "const": "preparation-manifest" } }
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            ]
+          },
+          "evidence": { "$ref": "#/$defs/readyToPlaceEvidence" },
+          "error": { "const": null }
+        }
+      },
+      "else": {
+        "properties": {
+          "artifacts": { "maxItems": 0 },
+          "error": { "type": "object" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "readyToPlaceEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "routeSelection", "navigation", "material", "catalogVersion",
+        "presentationProfile", "publication"
+      ],
+      "properties": {
+        "routeSelection": { "const": "catalog_exact_match" },
+        "navigation": { "const": "expected_texts_verified" },
+        "material": { "const": "ready_to_place" },
+        "catalogVersion": { "type": "string", "pattern": ".*\\S.*" },
+        "presentationProfile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "version", "status"],
+          "properties": {
+            "id": { "const": "chipk.stock-main-force-portrait.v1" },
+            "version": { "const": 1 },
+            "status": { "const": "ready_to_place" }
+          }
+        },
+        "publication": { "const": "atomic_directory_rename" }
+      }
+    },
+    "media": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "properties": {
+        "codec": { "type": "string", "pattern": ".*\\S.*" },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "durationSeconds": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "kind", "relativePath", "sha256", "mimeType"],
+      "properties": {
+        "role": {
+          "enum": [
+            "prepared-video",
+            "screenshot",
+            "capture-manifest",
+            "presentation-plan",
+            "preparation-manifest"
+          ]
+        },
+        "kind": { "enum": ["image", "video", "json"] },
+        "relativePath": { "type": "string", "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/]+(?:/[^/]+)*$" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "mimeType": { "enum": ["image/png", "video/mp4", "application/json"] },
+        "media": { "$ref": "#/$defs/media" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "role": { "const": "screenshot" },
+            "kind": { "const": "image" },
+            "mimeType": { "const": "image/png" },
+            "media": {
+              "allOf": [
+                { "$ref": "#/$defs/media" },
+                { "not": { "anyOf": [{ "required": ["codec"] }, { "required": ["durationSeconds"] }] } }
+              ]
+            }
+          },
+          "required": ["media"]
+        },
+        {
+          "properties": {
+            "role": { "const": "prepared-video" },
+            "kind": { "const": "video" },
+            "mimeType": { "const": "video/mp4" },
+            "media": {
+              "allOf": [
+                { "$ref": "#/$defs/media" },
+                {
+                  "required": ["codec", "durationSeconds"],
+                  "properties": { "codec": { "const": "h264" } }
+                }
+              ]
+            }
+          },
+          "required": ["media"]
+        },
+        {
+          "properties": {
+            "role": {
+              "enum": ["capture-manifest", "presentation-plan", "preparation-manifest"]
+            },
+            "kind": { "const": "json" },
+            "mimeType": { "const": "application/json" }
+          },
+          "not": { "required": ["media"] }
+        }
+      ]
+    }
+  }
+}

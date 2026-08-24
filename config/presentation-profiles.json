@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "profiles": [
+    {
+      "id": "chipk.stock-main-force-portrait.v1",
+      "version": 1,
+      "status": "ready_to_place",
+      "sourceKind": "screenshot",
+      "routeIds": ["chipk.stock.main-force"],
+      "stockIds": ["3441"],
+      "durationSeconds": 5,
+      "fps": 30,
+      "camera": {
+        "strategy": "full_to_static_focus",
+        "keyframes": [
+          { "atSeconds": 0, "zoom": 1, "centerX": 0.5, "centerY": 0.5 },
+          { "atSeconds": 0.75, "zoom": 1, "centerX": 0.5, "centerY": 0.5 },
+          { "atSeconds": 1.5, "zoom": 1.1, "centerX": 0.5, "centerY": 0.46 },
+          { "atSeconds": 5, "zoom": 1.1, "centerX": 0.5, "centerY": 0.46 }
+        ]
+      },
+      "interactions": [],
+      "output": {
+        "codec": "h264",
+        "encoder": "libx264",
+        "pixelFormat": "yuv420p",
+        "preset": "medium",
+        "crf": 18,
+        "audio": "none"
+      }
+    }
+  ]
+}

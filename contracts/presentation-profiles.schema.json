@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/chipk-capture/presentation-profiles-v1.json",
+  "title": "ChipK ready-to-place presentation profiles",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "profiles"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id", "version", "status", "sourceKind", "routeIds", "stockIds",
+          "durationSeconds", "fps", "camera", "interactions", "output"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$" },
+          "version": { "type": "integer", "minimum": 1 },
+          "status": { "const": "ready_to_place" },
+          "sourceKind": { "const": "screenshot" },
+          "routeIds": {
+            "type": "array", "minItems": 1, "items": { "type": "string" }
+          },
+          "stockIds": {
+            "type": "array", "minItems": 1, "items": { "type": "string" }
+          },
+          "durationSeconds": { "type": "number", "exclusiveMinimum": 0 },
+          "fps": { "type": "integer", "minimum": 1 },
+          "camera": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["strategy", "keyframes"],
+            "properties": {
+              "strategy": { "const": "full_to_static_focus" },
+              "keyframes": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["atSeconds", "zoom", "centerX", "centerY"],
+                  "properties": {
+                    "atSeconds": { "type": "number", "minimum": 0 },
+                    "zoom": { "type": "number", "minimum": 1 },
+                    "centerX": { "type": "number", "minimum": 0, "maximum": 1 },
+                    "centerY": { "type": "number", "minimum": 0, "maximum": 1 }
+                  }
+                }
+              }
+            }
+          },
+          "interactions": { "type": "array", "maxItems": 0 },
+          "output": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["codec", "encoder", "pixelFormat", "preset", "crf", "audio"],
+            "properties": {
+              "codec": { "const": "h264" },
+              "encoder": { "const": "libx264" },
+              "pixelFormat": { "const": "yuv420p" },
+              "preset": { "type": "string" },
+              "crf": { "type": "integer", "minimum": 0, "maximum": 51 },
+              "audio": { "const": "none" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
