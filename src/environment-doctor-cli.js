@@ -3,7 +3,15 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { DoctorError, PINNED_PROVIDER, RUN_CONTRACT, doctor, readProfile, validateProfile } = require('./environment-doctor');
+const {
+  DoctorError,
+  PINNED_PROVIDER,
+  REQUIRED_VIP_SESSION_CAPABILITY,
+  RUN_CONTRACT,
+  doctor,
+  readProfile,
+  validateProfile,
+} = require('./environment-doctor');
 
 const DEFAULT_PROFILE = path.resolve(__dirname, '..', '.runtime', 'machine-profile.json');
 
@@ -73,6 +81,10 @@ function main(argv, streams = { stdout: process.stdout, stderr: process.stderr }
         checks: [],
         error: { code: error.code, message: error.message, action: error.action },
         runContract: RUN_CONTRACT,
+        runReadiness: {
+          vipSession: 'unavailable',
+          requiredCapability: REQUIRED_VIP_SESSION_CAPABILITY,
+        },
       };
     }
     if (result.status !== 'READY' || args.command === 'doctor') {
@@ -90,6 +102,22 @@ function main(argv, streams = { stdout: process.stdout, stderr: process.stderr }
       });
       return 3;
     }
+    if (result.runReadiness?.vipSession !== 'available') {
+      writeJson(streams.stdout, {
+        schemaVersion: 1,
+        status: 'HUMAN_ACTION_REQUIRED',
+        sideEffectFree: true,
+        checks: result.checks,
+        error: {
+          code: 'PROVIDER_VIP_SESSION_PREFLIGHT_REQUIRED',
+          message: 'Pinned Provider cannot verify the approved VIP session before mutation.',
+          action: `Install a reviewed pinned Provider advertising runReadiness.vipSession=${REQUIRED_VIP_SESSION_CAPABILITY}.`,
+        },
+        runContract: result.runContract,
+        runReadiness: result.runReadiness,
+      });
+      return 3;
+    }
     const profile = readProfile(args.profilePath, options.fs);
     const child = (options.exec || spawnSync)(profile.provider.executable, ['acquire', '--request', args.values['--request'], '--json'], {
       encoding: 'utf8',
@@ -98,8 +126,7 @@ function main(argv, streams = { stdout: process.stdout, stderr: process.stderr }
         DEVELOPER_DIR: profile.xcode.developerDir,
         CHIPK_SIMULATOR_UDID: profile.simulator.udid,
         CHIPK_CAPTURE_AUTHORIZED: '1',
-        // v0.3.0 legacy adapter gates. The launcher derives dedicated identity from doctor and
-        // delegates session truth to the Provider's fail-closed target/login/content assertions.
+        // The clean pinned Provider has advertised fail-closed VIP verification before mutation.
         CHIPK_DEDICATED_SIMULATOR_CONFIRMED: '1',
         CHIPK_VIP_SESSION_CONFIRMED: '1',
       },

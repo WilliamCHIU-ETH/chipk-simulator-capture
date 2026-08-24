@@ -58,10 +58,17 @@ npm run --silent machine:doctor
 The doctor is side-effect-free: it probes the pinned Provider identity, exact release commit,
 configured `DEVELOPER_DIR`, `simctl`, and the exact available/Booted Simulator. It never opens or
 launches the App, creates an acquisition, or writes a Run. `READY` means only the Simulator
-environment is ready. Each acquisition still requires explicit authorization; dedicated-device
-identity is rechecked automatically, and the Provider automatically validates target/login/content
-session evidence during the authorized run. Only a missing or inconsistent device/session returns
+environment is ready. Each acquisition still requires explicit authorization and dedicated-device
+identity is rechecked automatically. A compatible Provider must automatically validate approved
+VIP session evidence before mutation; missing capability or inconsistent evidence returns
 `human_action_required`.
+
+The launcher requires the pinned Provider to advertise
+`runReadiness.vipSession=verified_before_mutation` before it injects the legacy v0.3 session gate
+or starts `acquire`. The current v0.3.0 release does not advertise that capability, so authorized
+acquisition fails closed with `PROVIDER_VIP_SESSION_PREFLIGHT_REQUIRED` before child execution or
+`simctl openurl`. A future reviewed Provider must implement and advertise the capability; the
+launcher does not substitute optional post-navigation OCR as proof.
 
 When one exact acquisition has fresh approval, the operator launcher reruns the same doctor and
 turns explicit flags into child-process-only environment attestations:
@@ -188,9 +195,10 @@ export CHIPK_VIP_SESSION_CONFIRMED=1
 ```
 
 These are v0.3.0 runtime selection and compatibility gates, not credentials. The machine launcher
-derives the exact device gates from the verified profile and supplies the legacy dedicated/session
-flags only to the child process; the Provider's route, login-absence, and content assertions remain
-the source of per-run session truth. Operators provide only explicit acquisition authorization.
+derives the exact device gate from the verified profile, but supplies the legacy session flag only
+when clean pinned Provider code advertises pre-mutation, fail-closed VIP verification. v0.3.0 does
+not, so its machine-launched acquisition is blocked before execution. Operators provide only
+explicit acquisition authorization; they are not asked for a replacement VIP attestation.
 Missing or inconsistent runtime evidence returns a typed `human_action_required` result and
 publishes nothing. `productionReady: true` in capabilities means
 the reviewed catalog and runtime operations ship together; it does not claim that the current

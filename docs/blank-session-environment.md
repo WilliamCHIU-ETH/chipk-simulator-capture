@@ -72,11 +72,23 @@ delivery remain unproven.
 
 The launcher requires only explicit `--authorize-run` on every acquisition. It reruns doctor to
 verify the pinned runtime and exact dedicated device before starting the Provider. For v0.3.0 it
-then supplies the legacy dedicated/session environment gates only to that child process. Those
-values are compatibility plumbing, not persisted human claims: session truth comes from the
-Provider's fail-closed target-page, login-absence, readiness, and content assertions during the
-authorized run. Missing, locked, login, or inconsistent evidence returns typed human action.
+does not supply the legacy VIP environment gate or start the child: that release lacks a capability
+guaranteeing approved VIP verification before any mutation. The launcher returns
+`PROVIDER_VIP_SESSION_PREFLIGHT_REQUIRED` and names the required capability:
+`runReadiness.vipSession=verified_before_mutation`.
+
+A future pinned Provider may pass this gate only when its reviewed code both advertises and
+implements fail-closed verification before `openurl`, App launch, recording, or publication.
+Optional content OCR after navigation is not sufficient proof. Missing, locked, login, or
+inconsistent evidence must return typed human action without publication.
 
 Nothing is exported to the parent shell or written back to the profile. Doctor itself never probes
 VIP state because doing so would require App/session interaction; its `READY` remains scoped to the
 machine environment.
+
+## Immutable Provider proof
+
+HEAD identity alone is insufficient. Before READY, doctor also requires an empty porcelain status
+including untracked files, rejects linked worktrees, and requires the configured executable to be
+the exact tracked `bin/chipk-capture.js` path. A dirty tracked file, untracked replacement, or
+alternate executable under `bin/` blocks execution.

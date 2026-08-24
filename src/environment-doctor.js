@@ -21,6 +21,8 @@ const PINNED_PROVIDER = Object.freeze({
   version: '0.3.0',
   commit: '586fbe7414ab0c25d78ae6e462887fe72030e0a7',
 });
+const EXPECTED_PROVIDER_EXECUTABLE = 'bin/chipk-capture.js';
+const REQUIRED_VIP_SESSION_CAPABILITY = 'verified_before_mutation';
 const RUN_CONTRACT = Object.freeze({
   authorization: 'human_required_per_run',
   dedicatedDevice: 'automatic_pre_run_doctor',
@@ -132,12 +134,28 @@ function standaloneReleaseRoot(executable, exec) {
   if (commonDir !== path.join(root, '.git')) {
     throw new DoctorError('PROVIDER_INSTALLATION_UNSTABLE', 'provider executable belongs to a linked worktree', 'Use an independent immutable release clone, not a workspace worktree.');
   }
+  const relativeExecutable = path.relative(root, executable).split(path.sep).join('/');
+  if (relativeExecutable !== EXPECTED_PROVIDER_EXECUTABLE) {
+    throw new DoctorError('PROVIDER_EXECUTABLE_UNPINNED', `provider executable must be ${EXPECTED_PROVIDER_EXECUTABLE}`, 'Point the profile to the pinned tracked executable.');
+  }
+  const tracked = run('git', ['-C', root, 'ls-files', '--error-unmatch', '--', EXPECTED_PROVIDER_EXECUTABLE], {}, exec);
+  if (!tracked.ok || tracked.stdout.trim() !== EXPECTED_PROVIDER_EXECUTABLE) {
+    throw new DoctorError('PROVIDER_EXECUTABLE_UNTRACKED', 'provider executable is not tracked by the pinned commit', 'Reinstall the immutable Provider release.');
+  }
+  const status = run('git', ['-C', root, 'status', '--porcelain=v1', '--untracked-files=all', '--ignored=no'], {}, exec);
+  if (!status.ok || status.stdout.trim()) {
+    throw new DoctorError('PROVIDER_WORKTREE_DIRTY', 'provider release clone differs from the pinned commit', 'Discard the runtime clone and reinstall the pinned immutable release.');
+  }
   return { root, commit: head.stdout.trim().toLowerCase() };
 }
 
 function doctor(profile, options = {}) {
   const exec = options.exec || spawnSync;
   const checks = [];
+  let runReadiness = {
+    vipSession: 'unavailable',
+    requiredCapability: REQUIRED_VIP_SESSION_CAPABILITY,
+  };
   const fail = (error) => ({
     schemaVersion: 1,
     status: 'HUMAN_ACTION_REQUIRED',
@@ -145,6 +163,7 @@ function doctor(profile, options = {}) {
     checks,
     error: { code: error.code || 'ENVIRONMENT_DOCTOR_FAILED', message: error.message, action: error.action || 'Inspect the environment.' },
     runContract: RUN_CONTRACT,
+    runReadiness,
   });
   try {
     checks.push({ id: 'machine_profile', status: 'passed' });
@@ -170,7 +189,18 @@ function doctor(profile, options = {}) {
     if (capabilities.providerId !== profile.provider.expectedId || capabilities.toolVersion !== profile.provider.expectedVersion) {
       throw new DoctorError('PROVIDER_IDENTITY_MISMATCH', `provider reported ${capabilities.providerId}@${capabilities.toolVersion}`, `Install ${profile.provider.expectedId}@${profile.provider.expectedVersion}.`);
     }
-    checks.push({ id: 'provider_identity', status: 'passed', version: capabilities.toolVersion, commit: installation.commit });
+    const vipSessionCapability = capabilities.runReadiness?.vipSession;
+    runReadiness = {
+      vipSession: vipSessionCapability === REQUIRED_VIP_SESSION_CAPABILITY ? 'available' : 'unavailable',
+      requiredCapability: REQUIRED_VIP_SESSION_CAPABILITY,
+    };
+    checks.push({
+      id: 'provider_identity',
+      status: 'passed',
+      version: capabilities.toolVersion,
+      commit: installation.commit,
+      vipSessionVerification: runReadiness.vipSession,
+    });
 
     let developerDirectory;
     try { developerDirectory = fs.statSync(profile.xcode.developerDir); } catch {
@@ -199,8 +229,17 @@ function doctor(profile, options = {}) {
       sideEffectFree: true,
       checks,
       runContract: RUN_CONTRACT,
+      runReadiness,
     };
   } catch (error) { return fail(error); }
 }
 
-module.exports = { DoctorError, PINNED_PROVIDER, RUN_CONTRACT, doctor, readProfile, validateProfile };
+module.exports = {
+  DoctorError,
+  PINNED_PROVIDER,
+  REQUIRED_VIP_SESSION_CAPABILITY,
+  RUN_CONTRACT,
+  doctor,
+  readProfile,
+  validateProfile,
+};

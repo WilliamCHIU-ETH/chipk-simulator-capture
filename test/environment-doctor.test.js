@@ -39,6 +39,8 @@ function fakeExec(f, overrides = {}) {
     if (overrides[key]) return overrides[key](options);
     if (command === 'git' && args.at(-1) === 'HEAD') return { status: 0, stdout: `${COMMIT}\n`, stderr: '' };
     if (command === 'git' && args.at(-1) === '--git-common-dir') return { status: 0, stdout: `${path.join(f.providerRoot, '.git')}\n`, stderr: '' };
+    if (command === 'git' && args.includes('ls-files')) return { status: 0, stdout: 'bin/chipk-capture.js\n', stderr: '' };
+    if (command === 'git' && args.includes('status')) return { status: 0, stdout: '', stderr: '' };
     if (command === f.executable) {
       assert.equal(options.env.CHIPK_CAPTURE_AUTHORIZED, undefined);
       assert.equal(options.env.CHIPK_DEDICATED_SIMULATOR_CONFIRMED, undefined);
@@ -66,6 +68,7 @@ test('READY uses configured full/custom Xcode even when the global selection may
   assert.equal(result.runContract.authorization, 'human_required_per_run');
   assert.equal(result.runContract.dedicatedDevice, 'automatic_pre_run_doctor');
   assert.equal(result.runContract.vipSession, 'automatic_provider_runtime_verification');
+  assert.equal(result.runReadiness.vipSession, 'unavailable');
   assert.equal(result.checks[1].version, '0.3.0');
   assert.equal(result.checks[2].developerDir, f.developerDir);
   assert.equal(result.checks[3].udid, UDID);
@@ -94,6 +97,31 @@ test('linked worktree is rejected as a long-term provider installation', (t) => 
   const key = 'git -C ' + f.providerRoot + ' rev-parse --path-format=absolute --git-common-dir';
   const result = doctor(f.profile, { exec: fakeExec(f, { [key]: () => ({ status: 0, stdout: '/shared/repository/.git\n', stderr: '' }) }) });
   assert.equal(result.error.code, 'PROVIDER_INSTALLATION_UNSTABLE');
+});
+
+test('dirty Provider clone and untracked expected executable are rejected', (t) => {
+  const f = fixture(t);
+  const status = `git -C ${f.providerRoot} status --porcelain=v1 --untracked-files=all --ignored=no`;
+  let result = doctor(f.profile, {
+    exec: fakeExec(f, { [status]: () => ({ status: 0, stdout: ' M bin/chipk-capture.js\n', stderr: '' }) }),
+  });
+  assert.equal(result.error.code, 'PROVIDER_WORKTREE_DIRTY');
+
+  const tracked = `git -C ${f.providerRoot} ls-files --error-unmatch -- bin/chipk-capture.js`;
+  result = doctor(f.profile, {
+    exec: fakeExec(f, { [tracked]: () => ({ status: 1, stdout: '', stderr: 'not tracked' }) }),
+  });
+  assert.equal(result.error.code, 'PROVIDER_EXECUTABLE_UNTRACKED');
+});
+
+test('alternate executable under Provider bin is rejected even if it self-reports the pinned identity', (t) => {
+  const f = fixture(t);
+  const alternate = path.join(f.providerRoot, 'bin', 'alternate.js');
+  fs.writeFileSync(alternate, '#!/usr/bin/env node\n');
+  const result = doctor({ ...f.profile, provider: { ...f.profile.provider, executable: alternate } }, {
+    exec: fakeExec(f),
+  });
+  assert.equal(result.error.code, 'PROVIDER_EXECUTABLE_UNPINNED');
 });
 
 test('missing, duplicate, and non-booted exact UDID return distinct blockers', (t) => {
@@ -158,7 +186,18 @@ test('acquire converts authorization plus automatic checks to child-only v0.3.0 
   fs.writeFileSync(profilePath, `${JSON.stringify(f.profile)}\n`);
   const requestPath = path.join(f.root, 'request.json');
   fs.writeFileSync(requestPath, '{}\n');
-  const baseExec = fakeExec(f);
+  const probe = `${f.executable} capabilities --json`;
+  const baseExec = fakeExec(f, {
+    [probe]: () => ({
+      status: 0,
+      stdout: JSON.stringify({
+        providerId: 'chipk-simulator-capture',
+        toolVersion: '0.3.0',
+        runReadiness: { vipSession: 'verified_before_mutation' },
+      }),
+      stderr: '',
+    }),
+  });
   let acquireEnvironment;
   const exec = (command, args, options) => {
     if (command === f.executable && args[0] === 'acquire') {
@@ -182,6 +221,31 @@ test('acquire converts authorization plus automatic checks to child-only v0.3.0 
   assert.equal(acquireEnvironment.CHIPK_SIMULATOR_UDID, UDID);
   assert.equal(acquireEnvironment.CHIPK_CAPTURE_AUTHORIZED, '1');
   assert.equal(process.env.CHIPK_CAPTURE_AUTHORIZED, undefined);
+});
+
+test('current v0.3.0 fails closed before acquire when pre-mutation VIP capability is absent', (t) => {
+  const f = fixture(t);
+  const profilePath = path.join(f.root, 'machine-profile.json');
+  fs.writeFileSync(profilePath, `${JSON.stringify(f.profile)}\n`);
+  const requestPath = path.join(f.root, 'request.json');
+  fs.writeFileSync(requestPath, '{}\n');
+  let acquireCalls = 0;
+  const baseExec = fakeExec(f);
+  const exec = (command, args, options) => {
+    if (command === f.executable && args[0] === 'acquire') acquireCalls += 1;
+    return baseExec(command, args, options);
+  };
+  let stdout = '';
+  const code = main(
+    ['acquire', '--profile', profilePath, '--request', requestPath, '--authorize-run', '--json'],
+    { stdout: { write: (v) => { stdout += v; } }, stderr: { write: () => {} } },
+    { exec },
+  );
+  const result = JSON.parse(stdout);
+  assert.equal(code, 3);
+  assert.equal(result.error.code, 'PROVIDER_VIP_SESSION_PREFLIGHT_REQUIRED');
+  assert.equal(result.runReadiness.requiredCapability, 'verified_before_mutation');
+  assert.equal(acquireCalls, 0);
 });
 
 test('deprecated dedicated and VIP human flags are rejected instead of becoming extra gates', () => {
