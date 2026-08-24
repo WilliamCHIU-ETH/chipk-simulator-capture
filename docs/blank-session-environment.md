@@ -2,9 +2,10 @@
 
 ## Decision
 
-Use an independent, pinned release clone as the executable runtime and an ignored local machine
-profile as the only persistent handoff. Do not update the dirty canonical checkout, depend on a
-linked/detached workspace worktree, change global `xcode-select`, or persist per-run attestations.
+Use an independent, pinned release clone as the executable runtime and an ignored, one-time local
+machine profile as the only persistent handoff. Do not update the dirty canonical checkout, depend
+on a linked/detached workspace worktree, change global `xcode-select`, or persist run authorization
+or session claims.
 
 The alternatives were:
 
@@ -69,8 +70,13 @@ delivery remain unproven.
 
 ## Per-run launcher
 
-The launcher requires all three explicit flags on every invocation. Only after doctor returns
-READY does it set the exact UDID, `DEVELOPER_DIR`, authorization, dedicated-device attestation,
-and VIP-session attestation on the Provider child process. Nothing is exported to the parent shell
-or written back to the profile. A caller that has not freshly established the App/session gate
-must not supply the flags.
+The launcher requires only explicit `--authorize-run` on every acquisition. It reruns doctor to
+verify the pinned runtime and exact dedicated device before starting the Provider. For v0.3.0 it
+then supplies the legacy dedicated/session environment gates only to that child process. Those
+values are compatibility plumbing, not persisted human claims: session truth comes from the
+Provider's fail-closed target-page, login-absence, readiness, and content assertions during the
+authorized run. Missing, locked, login, or inconsistent evidence returns typed human action.
+
+Nothing is exported to the parent shell or written back to the profile. Doctor itself never probes
+VIP state because doing so would require App/session interaction; its `READY` remains scoped to the
+machine environment.

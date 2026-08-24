@@ -21,6 +21,11 @@ const PINNED_PROVIDER = Object.freeze({
   version: '0.3.0',
   commit: '586fbe7414ab0c25d78ae6e462887fe72030e0a7',
 });
+const RUN_CONTRACT = Object.freeze({
+  authorization: 'human_required_per_run',
+  dedicatedDevice: 'automatic_pre_run_doctor',
+  vipSession: 'automatic_provider_runtime_verification',
+});
 
 class DoctorError extends Error {
   constructor(code, message, action) {
@@ -139,7 +144,7 @@ function doctor(profile, options = {}) {
     sideEffectFree: true,
     checks,
     error: { code: error.code || 'ENVIRONMENT_DOCTOR_FAILED', message: error.message, action: error.action || 'Inspect the environment.' },
-    runContract: { authorization: 'required_per_run', dedicatedAttestation: 'required_per_run', vipSessionAttestation: 'required_per_run' },
+    runContract: RUN_CONTRACT,
   });
   try {
     checks.push({ id: 'machine_profile', status: 'passed' });
@@ -193,9 +198,9 @@ function doctor(profile, options = {}) {
       scope: 'simulator_environment_only',
       sideEffectFree: true,
       checks,
-      runContract: { authorization: 'required_per_run', dedicatedAttestation: 'required_per_run', vipSessionAttestation: 'required_per_run' },
+      runContract: RUN_CONTRACT,
     };
   } catch (error) { return fail(error); }
 }
 
-module.exports = { DoctorError, PINNED_PROVIDER, doctor, readProfile, validateProfile };
+module.exports = { DoctorError, PINNED_PROVIDER, RUN_CONTRACT, doctor, readProfile, validateProfile };

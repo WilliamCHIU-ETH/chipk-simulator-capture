@@ -58,7 +58,10 @@ npm run --silent machine:doctor
 The doctor is side-effect-free: it probes the pinned Provider identity, exact release commit,
 configured `DEVELOPER_DIR`, `simctl`, and the exact available/Booted Simulator. It never opens or
 launches the App, creates an acquisition, or writes a Run. `READY` means only the Simulator
-environment is ready; current-run authorization and session evidence remain human gates.
+environment is ready. Each acquisition still requires explicit authorization; dedicated-device
+identity is rechecked automatically, and the Provider automatically validates target/login/content
+session evidence during the authorized run. Only a missing or inconsistent device/session returns
+`human_action_required`.
 
 When one exact acquisition has fresh approval, the operator launcher reruns the same doctor and
 turns explicit flags into child-process-only environment attestations:
@@ -66,7 +69,7 @@ turns explicit flags into child-process-only environment attestations:
 ```bash
 node bin/chipk-capture-machine.js acquire \
   --request /absolute/request.json \
-  --authorize-run --confirm-dedicated --confirm-vip-session --json
+  --authorize-run --json
 ```
 
 See `docs/blank-session-environment.md` for installation choices, typed blockers, and evidence
@@ -184,8 +187,12 @@ export CHIPK_DEDICATED_SIMULATOR_CONFIRMED=1
 export CHIPK_VIP_SESSION_CONFIRMED=1
 ```
 
-These are runtime selection and attestations, not credentials. Missing values return a typed
-`human_action_required` result and publish nothing. `productionReady: true` in capabilities means
+These are v0.3.0 runtime selection and compatibility gates, not credentials. The machine launcher
+derives the exact device gates from the verified profile and supplies the legacy dedicated/session
+flags only to the child process; the Provider's route, login-absence, and content assertions remain
+the source of per-run session truth. Operators provide only explicit acquisition authorization.
+Missing or inconsistent runtime evidence returns a typed `human_action_required` result and
+publishes nothing. `productionReady: true` in capabilities means
 the reviewed catalog and runtime operations ship together; it does not claim that the current
 device, App, session, OCR, or Maestro environment is ready.
 

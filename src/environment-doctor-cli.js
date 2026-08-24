@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { DoctorError, PINNED_PROVIDER, doctor, readProfile, validateProfile } = require('./environment-doctor');
+const { DoctorError, PINNED_PROVIDER, RUN_CONTRACT, doctor, readProfile, validateProfile } = require('./environment-doctor');
 
 const DEFAULT_PROFILE = path.resolve(__dirname, '..', '.runtime', 'machine-profile.json');
 
@@ -13,7 +13,7 @@ function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (!['doctor', 'configure', 'acquire'].includes(command)) throw new Error('command must be doctor, configure, or acquire');
   const values = {};
-  const booleanFlags = new Set(['--json', '--authorize-run', '--confirm-dedicated', '--confirm-vip-session', '--confirm-dedicated-machine-role']);
+  const booleanFlags = new Set(['--json', '--authorize-run', '--confirm-dedicated-machine-role']);
   const valueFlags = new Set(['--profile', '--provider-bin', '--developer-dir', '--udid', '--request']);
   for (let index = 0; index < rest.length; index += 1) {
     const flag = rest[index];
@@ -72,25 +72,23 @@ function main(argv, streams = { stdout: process.stdout, stderr: process.stderr }
         sideEffectFree: true,
         checks: [],
         error: { code: error.code, message: error.message, action: error.action },
-        runContract: { authorization: 'required_per_run', dedicatedAttestation: 'required_per_run', vipSessionAttestation: 'required_per_run' },
+        runContract: RUN_CONTRACT,
       };
     }
     if (result.status !== 'READY' || args.command === 'doctor') {
       writeJson(streams.stdout, result);
       return result.status === 'READY' ? 0 : 3;
     }
-    for (const flag of ['--authorize-run', '--confirm-dedicated', '--confirm-vip-session']) {
-      if (!args.values[flag]) {
-        writeJson(streams.stdout, {
-          schemaVersion: 1,
-          status: 'HUMAN_ACTION_REQUIRED',
-          sideEffectFree: true,
-          checks: result.checks,
-          error: { code: 'RUN_AUTHORIZATION_REQUIRED', message: `${flag} is required for this run`, action: 'Obtain explicit approval for this exact run and repeat all three run attestations.' },
-          runContract: result.runContract,
-        });
-        return 3;
-      }
+    if (!args.values['--authorize-run']) {
+      writeJson(streams.stdout, {
+        schemaVersion: 1,
+        status: 'HUMAN_ACTION_REQUIRED',
+        sideEffectFree: true,
+        checks: result.checks,
+        error: { code: 'RUN_AUTHORIZATION_REQUIRED', message: '--authorize-run is required for this acquisition', action: 'Obtain explicit approval for this exact acquisition.' },
+        runContract: result.runContract,
+      });
+      return 3;
     }
     const profile = readProfile(args.profilePath, options.fs);
     const child = (options.exec || spawnSync)(profile.provider.executable, ['acquire', '--request', args.values['--request'], '--json'], {
@@ -100,6 +98,8 @@ function main(argv, streams = { stdout: process.stdout, stderr: process.stderr }
         DEVELOPER_DIR: profile.xcode.developerDir,
         CHIPK_SIMULATOR_UDID: profile.simulator.udid,
         CHIPK_CAPTURE_AUTHORIZED: '1',
+        // v0.3.0 legacy adapter gates. The launcher derives dedicated identity from doctor and
+        // delegates session truth to the Provider's fail-closed target/login/content assertions.
         CHIPK_DEDICATED_SIMULATOR_CONFIRMED: '1',
         CHIPK_VIP_SESSION_CONFIRMED: '1',
       },

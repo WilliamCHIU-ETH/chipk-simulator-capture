@@ -63,7 +63,9 @@ test('READY uses configured full/custom Xcode even when the global selection may
   assert.equal(result.status, 'READY');
   assert.equal(result.scope, 'simulator_environment_only');
   assert.equal(result.sideEffectFree, true);
-  assert.equal(result.runContract.authorization, 'required_per_run');
+  assert.equal(result.runContract.authorization, 'human_required_per_run');
+  assert.equal(result.runContract.dedicatedDevice, 'automatic_pre_run_doctor');
+  assert.equal(result.runContract.vipSession, 'automatic_provider_runtime_verification');
   assert.equal(result.checks[1].version, '0.3.0');
   assert.equal(result.checks[2].developerDir, f.developerDir);
   assert.equal(result.checks[3].udid, UDID);
@@ -150,7 +152,7 @@ test('blank-session canonical command returns a typed missing-profile blocker', 
   assert.equal(stderr, '');
 });
 
-test('acquire converts explicit current-run gates to child-only attestations', (t) => {
+test('acquire converts authorization plus automatic checks to child-only v0.3.0 gates', (t) => {
   const f = fixture(t);
   const profilePath = path.join(f.root, 'machine-profile.json');
   fs.writeFileSync(profilePath, `${JSON.stringify(f.profile)}\n`);
@@ -161,19 +163,54 @@ test('acquire converts explicit current-run gates to child-only attestations', (
   const exec = (command, args, options) => {
     if (command === f.executable && args[0] === 'acquire') {
       acquireEnvironment = options.env;
-      return { status: 3, stdout: '{"status":"human_action_required"}\n', stderr: '' };
+      return {
+        status: 3,
+        stdout: '{"status":"human_action_required","error":{"code":"SESSION_PREFLIGHT_EVIDENCE_INCOMPLETE"}}\n',
+        stderr: '',
+      };
     }
     return baseExec(command, args, options);
   };
   let stdout = '';
   const code = main([
-    'acquire', '--profile', profilePath, '--request', requestPath, '--authorize-run',
-    '--confirm-dedicated', '--confirm-vip-session', '--json',
+    'acquire', '--profile', profilePath, '--request', requestPath, '--authorize-run', '--json',
   ], { stdout: { write: (v) => { stdout += v; } }, stderr: { write: () => {} } }, { exec });
   assert.equal(code, 3);
   assert.equal(JSON.parse(stdout).status, 'human_action_required');
+  assert.equal(JSON.parse(stdout).error.code, 'SESSION_PREFLIGHT_EVIDENCE_INCOMPLETE');
   assert.equal(acquireEnvironment.DEVELOPER_DIR, f.developerDir);
   assert.equal(acquireEnvironment.CHIPK_SIMULATOR_UDID, UDID);
   assert.equal(acquireEnvironment.CHIPK_CAPTURE_AUTHORIZED, '1');
   assert.equal(process.env.CHIPK_CAPTURE_AUTHORIZED, undefined);
+});
+
+test('deprecated dedicated and VIP human flags are rejected instead of becoming extra gates', () => {
+  for (const flag of ['--confirm-dedicated', '--confirm-vip-session']) {
+    let stderr = '';
+    const code = main(
+      ['acquire', '--request', '/absolute/request.json', '--authorize-run', flag, '--json'],
+      { stdout: { write: () => {} }, stderr: { write: (v) => { stderr += v; } } },
+    );
+    assert.equal(code, 2);
+    assert.equal(JSON.parse(stderr).error.code, 'INVALID_MACHINE_COMMAND');
+  }
+});
+
+test('acquire asks only for run authorization after automatic environment validation', (t) => {
+  const f = fixture(t);
+  const profilePath = path.join(f.root, 'machine-profile.json');
+  fs.writeFileSync(profilePath, `${JSON.stringify(f.profile)}\n`);
+  const requestPath = path.join(f.root, 'request.json');
+  fs.writeFileSync(requestPath, '{}\n');
+  let stdout = '';
+  const code = main(
+    ['acquire', '--profile', profilePath, '--request', requestPath, '--json'],
+    { stdout: { write: (v) => { stdout += v; } }, stderr: { write: () => {} } },
+    { exec: fakeExec(f) },
+  );
+  const result = JSON.parse(stdout);
+  assert.equal(code, 3);
+  assert.equal(result.error.code, 'RUN_AUTHORIZATION_REQUIRED');
+  assert.equal(result.runContract.dedicatedDevice, 'automatic_pre_run_doctor');
+  assert.equal(result.runContract.vipSession, 'automatic_provider_runtime_verification');
 });
