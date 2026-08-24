@@ -2,12 +2,13 @@
 
 const { validateRequest, validateResult } = require('./contract');
 const { RuntimeAdapterError } = require('./runtime-adapter');
+const { validateProfileCapability } = require('./presentation-profiles');
 
 const PROVIDER_ID = 'chipk-simulator-capture';
 
-function createResult({ requestId, toolVersion, status, artifacts = [], evidence = {}, error = null }) {
+function createResult({ contractVersion = 1, requestId, toolVersion, status, artifacts = [], evidence = {}, error = null }) {
   return validateResult({
-    contractVersion: 1,
+    contractVersion,
     requestId,
     provider: { id: PROVIDER_ID, toolVersion },
     status,
@@ -17,15 +18,26 @@ function createResult({ requestId, toolVersion, status, artifacts = [], evidence
   });
 }
 
-function requiredRoles(operation) {
+function requiredRoles(contractVersion, operation) {
+  if (contractVersion === 2) {
+    return [
+      'prepared-video', 'screenshot', 'capture-manifest',
+      'presentation-plan', 'preparation-manifest',
+    ];
+  }
   return operation === 'screenshot'
     ? ['screenshot', 'capture-manifest']
     : ['raw-video', 'actions', 'recording-manifest'];
 }
 
-function validateCompletedArtifacts(operation, artifacts) {
+function validateCompletedArtifacts(contractVersion, operation, artifacts) {
+  if (Array.isArray(operation) && artifacts === undefined) {
+    artifacts = operation;
+    operation = contractVersion;
+    contractVersion = 1;
+  }
   const roles = artifacts.map((artifact) => artifact.role).sort();
-  const expected = requiredRoles(operation).sort();
+  const expected = requiredRoles(contractVersion, operation).sort();
   if (roles.length !== expected.length || roles.some((role, index) => role !== expected[index])) {
     throw new Error('runtime artifact bundle is incomplete');
   }
@@ -44,6 +56,22 @@ function createProvider({ runtimeAdapter, toolVersion }) {
   if (!['screenshot', 'record'].every((operation) => operations.includes(operation))) {
     throw new TypeError('runtimeAdapter must support screenshot and record');
   }
+  const supportsPreparedVideo = operations.includes('prepared-video');
+  let profileCapabilities = [];
+  if (supportsPreparedVideo) {
+    if (!Array.isArray(runtimeAdapter.profileCapabilities)
+      || runtimeAdapter.profileCapabilities.length === 0) {
+      throw new TypeError('prepared-video runtime requires at least one validated profile');
+    }
+    try {
+      profileCapabilities = runtimeAdapter.profileCapabilities.map(validateProfileCapability);
+    } catch {
+      throw new TypeError('prepared-video runtime contains an invalid profile capability');
+    }
+    if (new Set(profileCapabilities.map(({ id }) => id)).size !== profileCapabilities.length) {
+      throw new TypeError('prepared-video runtime profile capabilities must be unique');
+    }
+  }
 
   function capabilities() {
     return {
@@ -58,6 +86,29 @@ function createProvider({ runtimeAdapter, toolVersion }) {
         request: 'contracts/capture-request.schema.json',
         result: 'contracts/capture-result.schema.json',
       },
+      contractCapabilities: [
+        Object.freeze({
+          contractVersion: 1,
+          operations: ['screenshot', 'record'],
+          requestSchema: 'contracts/capture-request.schema.json',
+          resultSchema: 'contracts/capture-result.schema.json',
+        }),
+        ...(supportsPreparedVideo ? [Object.freeze({
+          contractVersion: 2,
+          operations: ['prepared-video'],
+          requestSchema: 'contracts/capture-request-v2.schema.json',
+          resultSchema: 'contracts/capture-result-v2.schema.json',
+          presentationProfiles: profileCapabilities.map((profile) => ({
+            id: profile.id,
+            version: profile.version,
+            status: profile.status,
+            sourceKind: profile.sourceKind,
+            routeIds: [...profile.routeIds],
+            stockIds: [...profile.stockIds],
+            artifactRole: profile.artifactRole,
+          })),
+        })] : []),
+      ],
       catalogVersion: runtimeAdapter.catalogVersion,
       runtimeConfiguration: {
         source: 'provider-local-environment',
@@ -74,8 +125,9 @@ function createProvider({ runtimeAdapter, toolVersion }) {
         || !runtimeResult.evidence || typeof runtimeResult.evidence !== 'object') {
         throw new Error('invalid runtime result');
       }
-      validateCompletedArtifacts(request.operation, runtimeResult.artifacts);
+      validateCompletedArtifacts(request.contractVersion, request.operation, runtimeResult.artifacts);
       return createResult({
+        contractVersion: request.contractVersion,
         requestId: request.requestId,
         toolVersion,
         status: 'completed',
@@ -85,6 +137,7 @@ function createProvider({ runtimeAdapter, toolVersion }) {
     } catch (error) {
       if (error instanceof RuntimeAdapterError) {
         return createResult({
+          contractVersion: request.contractVersion,
           requestId: request.requestId,
           toolVersion,
           status: error.status,
@@ -97,6 +150,7 @@ function createProvider({ runtimeAdapter, toolVersion }) {
         });
       }
       return createResult({
+        contractVersion: request.contractVersion,
         requestId: request.requestId,
         toolVersion,
         status: 'failed',

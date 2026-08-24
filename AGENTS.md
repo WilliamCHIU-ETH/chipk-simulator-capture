@@ -7,9 +7,10 @@ Product Core is defined in `docs/product-core.md`.
 
 Marketing Video owns fallback policy, Project/Revision/Asset/Timeline, narrative and scene-level
 composition, final rendering, and delivery. Capture owns the phone-local focus, gesture, crop,
-zoom/pan intent, and safe framing needed for future ready-to-place mobile material. Current Request
-and Result v1 still publish only screenshots or raw recordings with evidence; never claim a
-prepared-video artifact until an active versioned contract advertises and verifies that capability.
+zoom/pan intent, and safe framing needed for ready-to-place mobile material. Request/Result v1 still
+publish only screenshots or raw recordings with evidence. Contract v2 advertises one reviewed
+prepared-video vertical slice; never extend that claim beyond its advertised profile, route, and
+stock.
 
 Marketing Video may execute this provider as a subprocess. The provider must never import or
 reach back into Marketing Video source.
@@ -47,10 +48,12 @@ chipk-capture capabilities --json
 chipk-capture acquire --request <absolute-json-file> --json
 ```
 
-Request v1 and result v1 are closed schemas under `contracts/`. Artifact paths in a result are
-POSIX paths relative to the caller-owned `outputDirectory`; absolute artifact paths never cross
-the Port. Provider-local Simulator selection and run attestations come from the documented
-environment contract, not from Marketing Video imports.
+Request/Result v1 and v2 are separate closed schemas under `contracts/`. Artifact paths in a result
+are POSIX paths relative to the caller-owned `outputDirectory`; absolute artifact paths never cross
+the Port. For video workflows, the canonical consumer default is the advertised v2
+`prepared-video` operation. Direct helpers plus manual ingest are not a stable consumer path.
+Provider-local Simulator selection and run attestations come from the documented environment
+contract, not from Marketing Video imports.
 
 The direct route and recording helpers under `scripts/` remain provider-local operator and
 diagnostic entrypoints. They are not an alternative Marketing Video Port.

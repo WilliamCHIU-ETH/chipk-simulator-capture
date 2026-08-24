@@ -4,12 +4,13 @@ Standalone, optional ChipK material-acquisition provider for Marketing Video.
 
 ```text
 Marketing Video MaterialAcquisitionPort
-                 │ subprocess + JSON v1
+                 │ subprocess + versioned JSON
                  ▼
         chipk-capture acquire
                  │
-                 ├── reviewed route catalog → screenshot + manifest
-                 └── recording recipe → raw MP4 + actions + manifest
+                 ├── v1 screenshot → PNG + manifest
+                 ├── v1 recording recipe → raw MP4 + actions + manifest
+                 └── v2 prepared-video → fresh PNG + ready-to-place MP4 + provenance
 ```
 
 The dependency is one-way: Marketing Video invokes the CLI and never imports provider internals;
@@ -17,10 +18,12 @@ this repository never imports Marketing Video. Capture owns ChipK-specific acqui
 and phone-material preparation. Marketing Video owns fallback, Project/Revision/Asset/Timeline,
 scene-level composition, final rendering, and delivery.
 
-The accepted product direction is a verified, ready-to-place mobile bundle with raw media, actions,
-and provenance. The current closed v1 contract still publishes screenshots or raw recordings only;
-it does not yet advertise prepared-video output. See `docs/product-core.md` for the responsibility
-decision and the compatibility gate for a future contract.
+The default target for a video workflow is a verified, ready-to-place mobile bundle. Contract v1
+remains unchanged for screenshot and raw-recording callers. Contract v2 adds one fail-closed
+vertical slice: `chipk.stock.main-force` + stock `3441` + profile
+`chipk.stock-main-force-portrait.v1`. It captures a fresh screenshot and publishes a five-artifact
+prepared bundle only after route, stock, content, render, and provenance checks pass. See
+`docs/product-core.md` for the responsibility boundary.
 
 ## Clean-clone validation
 
@@ -93,12 +96,40 @@ chipk-capture capabilities --json
 chipk-capture acquire --request /absolute/path/request.json --json
 ```
 
-The request file must satisfy `contracts/capture-request.schema.json`. `outputDirectory` must be an
-existing caller-owned absolute directory. The provider writes only the fixed no-overwrite bundle
-inside that directory:
+The request file must satisfy the schema advertised for its contract version. `outputDirectory`
+must be an existing caller-owned absolute directory. The provider writes only a fixed no-overwrite
+bundle inside that directory:
 
 - screenshot: `screenshot.png`, `capture-manifest.json`;
 - record: `raw.mp4`, `actions.json`, `recording-manifest.json`.
+- prepared-video v2: atomic `ready-to-place/` directory containing `prepared.mp4`,
+  `screenshot.png`, `capture-manifest.json`, `presentation-plan.json`, and
+  `preparation-manifest.json`.
+
+For a Marketing Video workflow, ready-to-place is the default delivery target. The stable consumer
+must discover Contract v2 through `capabilities`, select its advertised presentation profile, and
+call the canonical `prepared-video` Port. Provider-local direct helpers plus manual asset ingest are
+diagnostics, not a valid replacement for this contract. An unsupported profile, route, stock,
+readiness check, or partial bundle fails closed; it never silently falls back to a raw screenshot.
+
+The first v2 request shape is:
+
+```json
+{
+  "contractVersion": 2,
+  "requestId": "example-ready-to-place-001",
+  "operation": "prepared-video",
+  "mode": "test",
+  "target": {
+    "routeId": "chipk.stock.main-force",
+    "stockId": "3441"
+  },
+  "presentation": {
+    "profileId": "chipk.stock-main-force-portrait.v1"
+  },
+  "outputDirectory": "/absolute/caller-owned/runtime-directory"
+}
+```
 
 Result artifacts form a closed array. Every entry includes `role`, `kind`, POSIX `relativePath`,
 `sha256`, and `mimeType`; image/video entries also include dimensions, codec when applicable, and
@@ -138,8 +169,9 @@ The coverage and release commands are provider-local source diagnostics. They do
 to the canonical `chipk-capture capabilities/acquire` Port. See `docs/source-coverage.md` for the
 route-level evidence boundary.
 
-Actual direct `capture` or `record` commands mutate Simulator state and require explicit user
-authorization. See `.agents/skills/chipk-simulator-capture/SKILL.md` first.
+Any actual v1 or v2 acquisition mutates Simulator state and requires explicit authorization in the
+current request. The v2 default for video workflows does not bypass that gate. See
+`.agents/skills/chipk-simulator-capture/SKILL.md` first.
 
 ## Experimental prepared mobile clip v0
 
@@ -164,7 +196,7 @@ node scripts/prepare-mobile-clip.js render \
   --json
 ```
 
-This is not part of the stable `chipk-capture` v1 request/result contract. It does not touch a
+This raw-recording experiment is not the stable screenshot-state v2 profile. It does not touch a
 Simulator or network, and it fails closed when current actions lack passed observed timing,
 normalized gesture geometry, an explicit long-press marker, result assertion, or result hold.
 Generated media, plans, and provenance stay under ignored `.runtime/`. See

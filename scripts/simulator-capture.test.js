@@ -286,6 +286,17 @@ test('正式 Featured route 要求 root navigation，其他 route 保留 current
   assert.equal(stock.parameters.noReloadApp, '1');
 });
 
+test('正式 main-force prepared slice 同時要求 route-specific readiness 與 usable content', () => {
+  const plan = buildPlan(readCatalog(), {
+    route: 'chipk.stock.main-force',
+    mode: 'test',
+    stockId: '3441',
+    stockName: '聯一光',
+  });
+  assert.deepEqual(plan.expectedTexts, ['主力', '主力買賣超', '3441']);
+  assert.deepEqual(plan.contentTexts, ['買賣家數差', '聯一光']);
+});
+
 test('resolveStock 只以正式名稱或完整 ID deterministic 解析台積電', () => {
   assert.deepEqual(resolveStock(fixtureCatalog(), '這段要拍台積電的健檢').resolvedParams, {
     stockid: '2330',
@@ -907,6 +918,53 @@ test('capture readiness 由 default/PSM6 解決時只補一次 PSM11 content fal
       readinessStage,
     );
   }
+});
+
+test('provider 內部 content gate 會在 readiness 先到時續 poll，直到內容出現', async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'simulator-capture-content-later-test-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const udid = '11111111-1111-1111-1111-111111111111';
+  let poll = 0;
+  let sleepCount = 0;
+  let tick = 0;
+
+  const result = await captureRoute(
+    fixtureCatalog(),
+    {
+      route: 'stock-health-check',
+      mode: 'test',
+      stockId: '2330',
+      stockName: '台積電',
+      udid,
+      output: path.join(tempDir, 'capture.png'),
+      manifest: path.join(tempDir, 'capture.json'),
+      confirmVipSession: true,
+      requireContentTexts: true,
+    },
+    {
+      exec: syntheticCaptureExec(udid),
+      ocrLines: (_file, _lang, options) => {
+        if (options === undefined) poll += 1;
+        if (options?.psm === 11) return [];
+        return [syntheticOcrLine(
+          poll === 1
+            ? '健檢 2330 台積電'
+            : '健檢 2330 綜合評語 交易屬性健診 台積電',
+        )];
+      },
+      sleep: async () => { sleepCount += 1; },
+      clock: () => (tick += 100),
+      now: () => new Date(2026, 7, 19),
+    },
+  );
+
+  assert.equal(sleepCount, 1);
+  assert.deepEqual(result.verification.contentTexts, {
+    expected: ['綜合評語', '交易屬性健診', '台積電'],
+    observed: ['綜合評語', '交易屬性健診', '台積電'],
+    missing: [],
+  });
+  assert.equal(result.verification.ocrReadiness.pollAttemptCount, 2);
 });
 
 test('capture 的 PSM11 adjacent-column fragments 不得通過且零發布', async (t) => {

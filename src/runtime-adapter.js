@@ -15,6 +15,8 @@ const {
   readRecipes,
   recordRecipe,
 } = require('../scripts/simulator-record');
+const { getProfile, profileCapability, readProfiles } = require('./presentation-profiles');
+const { renderPreparedScreenshot } = require('./prepared-state-renderer');
 const { validateResult } = require('./contract');
 
 const REQUIRED_RUN_ENV = Object.freeze([
@@ -158,9 +160,15 @@ function rollbackPublishedPaths(filePaths, fsImpl = fs) {
   }
 }
 
-function finalizeRuntimeResult(requestId, artifacts, evidence) {
+function finalizeRuntimeResult(contractVersion, requestId, artifacts, evidence) {
+  if (typeof contractVersion === 'string') {
+    evidence = artifacts;
+    artifacts = requestId;
+    requestId = contractVersion;
+    contractVersion = 1;
+  }
   const result = validateResult({
-    contractVersion: 1,
+    contractVersion,
     requestId,
     provider: { id: 'chipk-simulator-capture', toolVersion: 'runtime' },
     status: 'completed',
@@ -178,6 +186,7 @@ function safeRuntimeFailure(error) {
     : 'RUNTIME_EXECUTION_FAILED';
   const humanCodes = new Set([
     'EXPECTED_TEXT_TIMEOUT',
+    'CONTENT_TEXT_TIMEOUT',
     'OCR_UNAVAILABLE',
     'OCR_LANGUAGE_MISSING',
     'SIMULATOR_NOT_FOUND',
@@ -192,6 +201,10 @@ function safeRuntimeFailure(error) {
     'RECIPE_NOT_FOUND',
     'RECIPE_ROUTE_MISMATCH',
     'RECIPE_MODE_MISMATCH',
+    'STOCK_NOT_FOUND',
+    'STOCK_CONFLICT',
+    'UNSUPPORTED_PRESENTATION_PROFILE',
+    'UNSUPPORTED_PREPARED_TARGET',
   ]);
   if (humanCodes.has(code)) {
     return new RuntimeAdapterError(code, 'Simulator state requires operator attention before retry.', {
@@ -215,9 +228,49 @@ function createRuntimeAdapter(options = {}) {
   const recipeFile = options.recipeFile || readRecipes(catalog);
   const capture = options.captureRoute || captureRoute;
   const record = options.recordRecipe || recordRecipe;
+  const prepareScreenshot = options.prepareScreenshot || renderPreparedScreenshot;
+  const profiles = options.profiles || readProfiles();
+  const preparedRendererOptions = options.preparedRendererOptions || {};
   const clock = options.now || (() => new Date());
 
   function plan(request) {
+    if (request.contractVersion === 2) {
+      let profile;
+      try {
+        profile = getProfile(profiles, request.presentation.profileId);
+      } catch (error) {
+        throw new RuntimeAdapterError(
+          error.code || 'UNSUPPORTED_PRESENTATION_PROFILE',
+          'The requested presentation profile is not supported.',
+          { status: 'rejected', retryable: false },
+        );
+      }
+      if (!profile.routeIds.includes(request.target.routeId)
+        || !profile.stockIds.includes(request.target.stockId)) {
+        throw new RuntimeAdapterError(
+          'UNSUPPORTED_PREPARED_TARGET',
+          'The requested route and stock are outside the reviewed prepared-video slice.',
+          { status: 'rejected', retryable: false },
+        );
+      }
+      const reviewedStock = catalog.stockDirectory?.find((stock) => stock.id === request.target.stockId);
+      if (!reviewedStock || (request.target.stockName !== undefined
+        && request.target.stockName !== reviewedStock.name)) {
+        throw new RuntimeAdapterError(
+          'STOCK_CONFLICT',
+          'The requested stock identity does not match the reviewed directory.',
+          { status: 'rejected', retryable: false },
+        );
+      }
+      const capturePlan = buildPlan(catalog, {
+        route: request.target.routeId,
+        mode: request.mode,
+        scriptDate: request.mode === 'live' ? localDate(clock()) : undefined,
+        stockId: request.target.stockId,
+        stockName: reviewedStock.name,
+      }, clock());
+      return Object.freeze({ profile, capturePlan });
+    }
     if (request.operation === 'screenshot') {
       if (request.target.recipeId !== undefined) {
         throw new RuntimeAdapterError('UNEXPECTED_RECIPE', 'target.recipeId is only valid for record.', {
@@ -262,10 +315,99 @@ function createRuntimeAdapter(options = {}) {
   async function execute(request) {
     let planValue;
     let publishedPaths = [];
+    let stagingDirectory = null;
     try {
       planValue = plan(request);
       const outputDirectory = requireCallerOutputDirectory(request.outputDirectory, fsImpl);
       const runConfiguration = readRunConfiguration(environment);
+      if (request.contractVersion === 2) {
+        const finalDirectoryName = 'ready-to-place';
+        const finalDirectory = path.join(outputDirectory, finalDirectoryName);
+        assertFreshOutputPaths([finalDirectory], fsImpl);
+        stagingDirectory = fsImpl.mkdtempSync(path.join(outputDirectory, '.chipk-ready-to-place-'));
+        const screenshotPath = path.join(stagingDirectory, 'screenshot.png');
+        const captureManifestPath = path.join(stagingDirectory, 'capture-manifest.json');
+        const preparedVideoPath = path.join(stagingDirectory, 'prepared.mp4');
+        const presentationPlanPath = path.join(stagingDirectory, 'presentation-plan.json');
+        const preparationManifestPath = path.join(stagingDirectory, 'preparation-manifest.json');
+
+        await capture(catalog, {
+          route: request.target.routeId,
+          mode: request.mode,
+          scriptDate: request.mode === 'live' ? localDate(clock()) : undefined,
+          stockId: request.target.stockId,
+          stockName: planValue.capturePlan.parameters.stockname,
+          udid: runConfiguration.udid,
+          confirmVipSession: true,
+          requireContentTexts: true,
+          output: screenshotPath,
+          manifest: captureManifestPath,
+        });
+        const prepared = await prepareScreenshot({
+          request,
+          profile: planValue.profile,
+          capturePlan: planValue.capturePlan,
+          catalogVersion: catalog.catalogVersion,
+          screenshot: screenshotPath,
+          captureManifest: captureManifestPath,
+          preparedVideo: preparedVideoPath,
+          presentationPlan: presentationPlanPath,
+          preparationManifest: preparationManifestPath,
+        }, preparedRendererOptions);
+        const image = pngSize(screenshotPath);
+        const prefix = `${finalDirectoryName}/`;
+        const runtimeResult = finalizeRuntimeResult(
+          2,
+          request.requestId,
+          [
+            descriptor({
+              role: 'prepared-video', kind: 'video', relativePath: `${prefix}prepared.mp4`,
+              filePath: preparedVideoPath, mimeType: 'video/mp4',
+              media: {
+                codec: prepared.media.codec,
+                width: prepared.media.width,
+                height: prepared.media.height,
+                durationSeconds: prepared.media.durationSeconds,
+              },
+            }, fsImpl),
+            descriptor({
+              role: 'screenshot', kind: 'image', relativePath: `${prefix}screenshot.png`,
+              filePath: screenshotPath, mimeType: 'image/png',
+              media: { width: image.width, height: image.height },
+            }, fsImpl),
+            descriptor({
+              role: 'capture-manifest', kind: 'json',
+              relativePath: `${prefix}capture-manifest.json`,
+              filePath: captureManifestPath, mimeType: 'application/json',
+            }, fsImpl),
+            descriptor({
+              role: 'presentation-plan', kind: 'json',
+              relativePath: `${prefix}presentation-plan.json`,
+              filePath: presentationPlanPath, mimeType: 'application/json',
+            }, fsImpl),
+            descriptor({
+              role: 'preparation-manifest', kind: 'json',
+              relativePath: `${prefix}preparation-manifest.json`,
+              filePath: preparationManifestPath, mimeType: 'application/json',
+            }, fsImpl),
+          ],
+          {
+            routeSelection: 'catalog_exact_match',
+            navigation: 'expected_texts_verified',
+            material: 'ready_to_place',
+            catalogVersion: catalog.catalogVersion,
+            presentationProfile: {
+              id: planValue.profile.id,
+              version: planValue.profile.version,
+              status: planValue.profile.status,
+            },
+            publication: 'atomic_directory_rename',
+          },
+        );
+        fsImpl.renameSync(stagingDirectory, finalDirectory);
+        stagingDirectory = null;
+        return runtimeResult;
+      }
       if (request.operation === 'screenshot') {
         const screenshotPath = path.join(outputDirectory, 'screenshot.png');
         const manifestPath = path.join(outputDirectory, 'capture-manifest.json');
@@ -285,6 +427,7 @@ function createRuntimeAdapter(options = {}) {
         publishedPaths = outputPaths;
         const image = pngSize(screenshotPath);
         return finalizeRuntimeResult(
+          1,
           request.requestId,
           [
             descriptor({
@@ -327,6 +470,7 @@ function createRuntimeAdapter(options = {}) {
       const manifest = JSON.parse(fsImpl.readFileSync(manifestPath, 'utf8'));
       const recording = manifest.recording || {};
       return finalizeRuntimeResult(
+        1,
         request.requestId,
         [
           descriptor({
@@ -371,12 +515,32 @@ function createRuntimeAdapter(options = {}) {
         catalogVersion: catalog.catalogVersion,
       };
       throw failure;
+    } finally {
+      if (stagingDirectory) {
+        try {
+          fsImpl.rmSync(stagingDirectory, { recursive: true, force: true });
+        } catch {
+          throw new RuntimeAdapterError(
+            'OUTPUT_ROLLBACK_FAILED',
+            'Provider staging cleanup requires operator attention.',
+            {
+              status: 'human_action_required',
+              retryable: false,
+              evidence: {
+                publicationState: 'cleanup_required',
+                material: 'cleanup_required',
+              },
+            },
+          );
+        }
+      }
     }
   }
 
   return Object.freeze({
     productionReady: true,
-    operations: Object.freeze(['screenshot', 'record']),
+    operations: Object.freeze(['screenshot', 'record', 'prepared-video']),
+    profileCapabilities: Object.freeze(profiles.profiles.map(profileCapability)),
     catalogVersion: catalog.catalogVersion,
     plan,
     execute,

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/chipk-capture/request-v2.json",
+  "title": "ChipK Capture Request v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "requestId",
+    "operation",
+    "mode",
+    "target",
+    "presentation",
+    "outputDirectory"
+  ],
+  "properties": {
+    "contractVersion": { "const": 2 },
+    "requestId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "operation": { "const": "prepared-video" },
+    "mode": { "enum": ["live", "test"] },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["routeId", "stockId"],
+      "properties": {
+        "routeId": { "type": "string", "pattern": "^chipk\\.[A-Za-z0-9._-]+$" },
+        "stockId": { "type": "string", "pattern": ".*\\S.*" },
+        "stockName": { "type": "string", "pattern": ".*\\S.*" }
+      }
+    },
+    "presentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profileId"],
+      "properties": {
+        "profileId": { "type": "string", "pattern": ".*\\S.*" }
+      }
+    },
+    "outputDirectory": { "type": "string", "pattern": "^/(?!$).*\\S.*" }
+  }
+}

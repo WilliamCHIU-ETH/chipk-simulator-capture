@@ -984,9 +984,11 @@ async function captureRoute(catalog, input, deps = {}) {
   const wait = deps.sleep || sleep;
   const clock = deps.clock || Date.now;
   const started = clock();
+  const requireContentTexts = input.requireContentTexts === true;
   const ocrModesTried = new Set();
   let ocrCallCount = 0;
   let pollAttemptCount = 0;
+  let lastContentMatch = null;
   let result;
   try {
     exec('xcrun', ['simctl', 'openurl', input.udid, plan.url]);
@@ -1031,12 +1033,21 @@ async function captureRoute(catalog, input, deps = {}) {
             sparseContentMatch,
           );
         }
-        result = { match, contentMatch, elapsedMs: clock() - started, resolvedBy };
-        break;
+        lastContentMatch = contentMatch;
+        if (!requireContentTexts || contentMatch.missing.length === 0) {
+          result = { match, contentMatch, elapsedMs: clock() - started, resolvedBy };
+          break;
+        }
       }
       await wait(pollMs);
     }
     if (!result) {
+      if (requireContentTexts && lastContentMatch?.missing.length > 0) {
+        throw new CliError(
+          `等待畫面逾時；OCR 未同時找到內容：${lastContentMatch.missing.join(', ')}`,
+          'content_text_timeout',
+        );
+      }
       throw new CliError(
         `等待畫面逾時；OCR 未同時找到：${plan.expectedTexts.join(', ')}`,
         'expected_text_timeout',

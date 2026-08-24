@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "catalogVersion": "chipk-ios-reviewed-2026-08-23-root-navigation+stocks-2150334a",
+  "catalogVersion": "chipk-ios-reviewed-2026-08-24-ready-to-place-v2",
   "product": {
     "id": "chipk",
     "name": "籌碼K線",
@@ -198,9 +198,12 @@
         }
       ],
       "expectedTexts": [
-        "主力"
+        "主力",
+        "主力買賣超"
       ],
-      "contentTexts": [],
+      "contentTexts": [
+        "買賣家數差"
+      ],
       "captureAllowed": true,
       "sideEffectRisk": "none"
     },
